@@ -284,7 +284,7 @@ st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div
 st.markdown('<div id="home" style="scroll-margin-top:85px"></div>',unsafe_allow_html=True)
 st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{registration_count}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role.str.lower().str.contains("keynote",na=False)])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
 
-heading("ConvergeX Living Genome","Every approved participant changes the structure of the conference.","becoming")
+heading("ConvergeX Living Genome","Every participant adds a new dimension to the ConvergeX experience.","becoming")
 genome_people=len(pub)
 genome_inst=int(pub.institution[pub.institution.str.strip()!=""].nunique()) if len(pub) else 0
 genome_talks=int((pub.talk_title.str.strip()!="").sum()) if len(pub) else 0
@@ -303,7 +303,7 @@ st.markdown(f'''<div class="becoming">
 <div class="genome-title"><div class="eyebrow">LIVING CONFERENCE GENOME</div><h2>CONVERGEX<br>IS BECOMING</h2><p>People enter. Connections form. The conference evolves.</p></div>
 </div>''',unsafe_allow_html=True)
 
-heading("Conclave Pulse","A live snapshot of the conference as participation grows.","experience")
+heading("Conclave Pulse","A growing portrait of the people, institutions, and ideas shaping ConvergeX.","experience")
 pulse_themes=sum(1 for t in THEMES if int((pub.theme==t).sum())>0)
 pulse_institutions=int(pub.institution[pub.institution.str.strip()!=""].nunique()) if len(pub) else 0
 pulse_countries=int(pub.country[pub.country.str.strip()!=""].nunique()) if len(pub) else 0
@@ -315,14 +315,14 @@ st.markdown(f'''<div class="cards">
 <div class="card"><span class="badge">PATHWAYS</span><h2>{pulse_themes}/{len(THEMES)}</h2><p>active focus areas</p></div>
 </div>''',unsafe_allow_html=True)
 
-heading("Focus Areas","Explore the conference once; participant and speaker views below are generated from the same master record.")
+heading("Focus Areas","Ideas and disciplines converging to shape tomorrow.")
 short=["Strategy","AI & GenAI","DeepTech","Research & Start-ups","IP & Patents","Leadership"]
 st.markdown('<div class="cards">'+"".join(f'<div class="card"><span class="badge">{i+1:02}</span><h3>{safe(a)}</h3><p>{safe(b)}</p></div>' for i,(a,b) in enumerate(zip(short,THEMES)))+'</div>',unsafe_allow_html=True)
 
 heading("Conference Leadership")
 st.markdown("""<div class="card"><span class="badge">CONCLAVE ORGANISER</span><div class="person">Ramesh Chandra Panda</div><p>Chairman & Chief Scientist, WEGROW · IPR Head of 12 Universities and 58 Engineering/Management/Law Colleges · Conclave Organiser · Editor of 7 Scopus-indexed journals</p></div>""",unsafe_allow_html=True)
 
-heading("People","Browse organizer-approved participants without turning the main page into a long directory.","people")
+heading("People","Meet the people bringing expertise, ideas, and perspectives to ConvergeX.","people")
 keynote_roles=[x for x in ROLES if "keynote" in x.lower()]
 invited_roles=[x for x in ROLES if "invited" in x.lower() and "keynote" not in x.lower()]
 other_roles=[x for x in ROLES if x not in keynote_roles+invited_roles]
@@ -357,7 +357,7 @@ if st.button(f"Open People Directory · {len(pub)} approved",use_container_width
     people_directory()
 st.download_button("Download approved people report",public_report_blob(pub),"ConvergeX_Approved_People.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
-heading("Conference Digital Twin","A live intelligence layer showing how approved people connect institutions, themes, roles and talks.","twin")
+heading("Conference Digital Twin","Discover how people, institutions, themes, and ideas connect across ConvergeX.","twin")
 twin_people=pub.copy()
 theme_counts={t:int((twin_people.theme==t).sum()) for t in THEMES}
 inst_count=int(twin_people.institution[twin_people.institution.str.strip()!=""].nunique()) if len(twin_people) else 0
@@ -381,7 +381,7 @@ if len(twin_people):
     st.caption("Largest represented theme: "+top_theme)
 
 if twin_people.empty:
-    st.info("The Digital Twin will activate automatically as the organizer approves registrations.")
+    st.info("The ConvergeX network will come alive as the community grows.")
 else:
     twin_tabs=st.tabs(["Explore connections","Theme intelligence","Institution network"])
     with twin_tabs[0]:
@@ -396,19 +396,19 @@ else:
             if r.talk_title: st.success("Connected talk: "+r.talk_title)
             related=twin_people[(twin_people.theme==r.theme)&(twin_people["name"]!=who)]
             if len(related): st.caption("Theme connections: "+", ".join(related["name"].tolist()))
-            else: st.caption("No other approved participant currently shares this theme.")
+            else: st.caption("A distinctive perspective within the current ConvergeX community.")
     with twin_tabs[1]:
         intelligence=pd.DataFrame({"Theme":THEMES,"Approved people":[theme_counts.get(t,0) for t in THEMES]}).sort_values("Approved people",ascending=False)
         st.dataframe(intelligence,use_container_width=True,hide_index=True)
         gaps=intelligence[intelligence["Approved people"]==0]["Theme"].tolist()
-        if gaps: st.info("Currently unrepresented pathways: "+", ".join(gaps))
-        else: st.success("All configured conference pathways currently have approved representation.")
+        if gaps: st.info("Emerging pathways await new voices: "+", ".join(gaps))
+        else: st.success("Every ConvergeX pathway is now represented by the community.")
     with twin_tabs[2]:
         inst=twin_people[twin_people.institution.str.strip()!=""].groupby("institution").agg(People=("name","count"),Themes=("theme","nunique"),Roles=("role","nunique")).reset_index().sort_values(["People","Themes"],ascending=False)
         st.dataframe(inst,use_container_width=True,hide_index=True)
-        if len(inst): st.caption("Institutions with participation across more themes form stronger cross-theme bridges in the live twin.")
+        if len(inst): st.caption("As institutions connect across themes, new bridges of collaboration emerge.")
 
-heading("Programme","The organizer publishes the schedule from the programme editor.","programme")
+heading("Programme","Explore the unfolding journey of ConvergeX, session by session.","programme")
 if programme.empty or not any(programme.title.str.strip()):
     st.markdown('<div class="card"><span class="badge">PROGRAMME</span><h3>Coming soon</h3><p>The detailed hour-wise programme will be published here by the organizer.</p></div>',unsafe_allow_html=True)
 else:
@@ -426,18 +426,18 @@ else:
                 html+=f'<div class="slot"><b>{safe(r["time"])}</b><h3>{safe(r["title"])}</h3><p>{safe(r["description"])}</p></div>'
             st.markdown(html+'</div>',unsafe_allow_html=True)
 
-heading("Venue","A single destination for the conclave.","venue")
+heading("Venue","Where ideas, people, and possibilities converge.","venue")
 st.markdown("""<div class="cards"><div class="card"><span class="badge">LOCATION</span><h3>The Sanihara Hotel & Resort</h3><p>Wayanad, Kerala, India</p></div><div class="card"><span class="badge">DATE</span><h3>25 October 2026</h3><p>Strategic technology, research, innovation and collaboration.</p></div><div class="card"><span class="badge">FORMAT</span><h3>In-person Conclave</h3><p>Plenary exchange, thematic sessions and professional networking.</p></div><div class="card"><span class="badge">AUDIENCE</span><h3>Cross-disciplinary</h3><p>Academia · Research · Industry · Entrepreneurship · Technology · IP</p></div></div>""",unsafe_allow_html=True)
 
 receipt=st.session_state.pop("registration_receipt",None)
 if receipt:
     st.success("Registration complete. Your Registration ID is "+receipt["id"]+".")
     if receipt["remote"]:
-        st.info("Registration saved to the conference master. The organizer can now review it.")
+        st.info("Your registration has been received and is awaiting review.")
     else:
-        st.warning("Registration was not committed to the conference master.")
+        st.warning("Your registration could not be completed. Please try again.")
 
-heading("Register","Submit once. Your role determines the directory in which you appear after approval.","register")
+heading("Register","Register your participation. Once approved, your profile becomes part of the ConvergeX community.","register")
 with st.form("registration",clear_on_submit=True):
     a,b=st.columns(2)
     with a:
@@ -470,7 +470,7 @@ if submitted:
         except Exception:
             st.error("Registration could not be completed. Please try again or contact the organizer.")
 
-heading("Registration Status","Check administrative progress without exposing contact information.","status")
+heading("Registration Status","Follow your ConvergeX participation journey.","status")
 q=st.text_input("Registration ID",placeholder="STDI-2026-XXXXXX")
 if q:
     hit=df[df.registration_id.str.upper()==q.strip().upper()]
@@ -480,7 +480,7 @@ if q:
         c1,c2,c3,c4=st.columns(4);c1.metric("Status",r.status or "Pending");c2.metric("Payment",r.payment or "Pending");c3.metric("Accommodation",r.accommodation or "—");c4.metric("Certificate",r.certificate or "—")
         st.caption(f"{r['name']} · {r.role} · {r.institution}")
 
-heading("Administration","Organizer-only control for registrations and the hour-wise programme.","admin")
+heading("Administration","ConvergeX organizer workspace.","admin")
 with st.expander("Organizer console"):
     u=st.text_input("Admin username",key="admin_u")
     p=st.text_input("Admin password",type="password",key="admin_p")
