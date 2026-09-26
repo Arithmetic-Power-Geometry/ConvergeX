@@ -1,1 +1,1 @@
-registration_id,timestamp,name,designation,institution,email,mobile,country,category,theme,bio,status
+registration_id,timestamp,name,designation,institution,email,mobile,country,role,theme,talk_title,profile,status,payment,accommodation,certificate
