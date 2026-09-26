@@ -52,6 +52,12 @@ IPR Head of 12 Universities and 58 Engineering/Management/Law Colleges
 Conclave Organiser  
 Editor of 7 Scopus-indexed journals
 
+## Platform Design & Development
+
+**Dr. Mohammad Amir Khusru Akhtar**  
+Dean Research & Coordinator IQAC  
+Usha Martin University, Ranchi, Jharkhand, India
+
 ---
 
 **Strategic Technomanagerial DeepTech Innovation Conclave 2026**  
