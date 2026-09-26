@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import csv, io, json, uuid, base64, urllib.request, urllib.error, urllib.parse, hashlib, hmac
+import csv, io, json, uuid, base64, urllib.request, urllib.error, hashlib, hmac
 from datetime import datetime
 from io import BytesIO
 
@@ -83,67 +83,36 @@ def save_taxonomy(roles,themes):
 
 ROLES,THEMES=load_taxonomy()
 
-def db_config():
-    url=secret("SUPABASE_URL").strip().rstrip("/")
-    key=secret("SUPABASE_KEY").strip()
-    return url,key
-
-def db_ready():
-    url,key=db_config()
-    return bool(url and key)
-
-def db_request(method,path,payload=None,prefer="return=representation"):
-    url,key=db_config()
-    if not url or not key: raise RuntimeError("Conference database is not configured.")
-    headers={"apikey":key,"Authorization":"Bearer "+key,"Content-Type":"application/json","Accept":"application/json"}
-    if prefer: headers["Prefer"]=prefer
-    data=None if payload is None else json.dumps(payload).encode("utf-8")
-    req=urllib.request.Request(url+"/rest/v1/"+path,data=data,method=method,headers=headers)
-    try:
-        with urllib.request.urlopen(req,timeout=20) as r:
-            raw=r.read()
-            return json.loads(raw.decode("utf-8")) if raw else []
-    except urllib.error.HTTPError as e:
-        detail=e.read().decode("utf-8",errors="replace")
-        raise RuntimeError("Conference database request failed ("+str(e.code)+"). "+detail[:300])
-
-def db_health():
-    if not db_ready(): return False,"Database secrets are not configured."
-    try:
-        db_request("GET","registrations?select=registration_id&limit=1",prefer="")
-        return True,""
-    except Exception as e: return False,str(e)
-
 def load_data(force_remote=False):
+    p=local_path("registrations.csv")
     try:
-        rows=db_request("GET","registrations?select=*&order=timestamp.asc",prefer="")
-        df=normalize(pd.DataFrame(rows))
-        df.to_csv(local_path("registrations.csv"),index=False)
+        if __import__("os").path.exists(p):
+            return normalize(pd.read_csv(p,dtype=str).fillna(""))
+    except Exception:
+        pass
+    # Seed once from the repository CSV if available; all later edits stay in Streamlit storage.
+    try:
+        url="https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH+"?v="+uuid.uuid4().hex
+        with urllib.request.urlopen(url,timeout=12) as r:
+            df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna(""))
+        df.to_csv(p,index=False)
         return df
     except Exception:
-        p=local_path("registrations.csv")
-        try:
-            if __import__("os").path.exists(p): return normalize(pd.read_csv(p,dtype=str).fillna(""))
-        except Exception: pass
-        return normalize(pd.DataFrame())
+        df=normalize(pd.DataFrame())
+        df.to_csv(p,index=False)
+        return df
 
 def csv_blob(df): return normalize(df).to_csv(index=False).encode("utf-8-sig")
 
 def excel_blob(df):
     out=BytesIO()
-    with pd.ExcelWriter(out,engine="openpyxl") as w: normalize(df).to_excel(w,index=False,sheet_name="Registrations")
+    with pd.ExcelWriter(out,engine="openpyxl") as w:
+        normalize(df).to_excel(w,index=False,sheet_name="Registrations")
     return out.getvalue()
 
 def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
-    clean=normalize(df)
-    deleted_ids=set(deleted_ids or [])
     try:
-        if deleted_ids:
-            for rid in deleted_ids:
-                db_request("DELETE","registrations?registration_id=eq."+urllib.parse.quote(str(rid),safe=""),prefer="return=minimal")
-        if len(clean):
-            records=clean.to_dict(orient="records")
-            db_request("POST","registrations?on_conflict=registration_id",records,prefer="resolution=merge-duplicates,return=minimal")
+        clean=normalize(df)
         clean.to_csv(local_path("registrations.csv"),index=False)
         st.session_state["last_remote_saved"]=True
         st.session_state["last_remote_error"]=""
@@ -154,15 +123,14 @@ def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
         return False
 
 def register(row):
+    df=load_data()
     email=str(row["email"]).strip().lower()
-    try:
-        existing=db_request("GET","registrations?select=registration_id&email=ilike."+urllib.parse.quote(email,safe="")+"&limit=1",prefer="")
-        if existing: raise ValueError("This email address is already registered.")
-        db_request("POST","registrations",[row],prefer="return=minimal")
-        return True
-    except ValueError: raise
-    except Exception as e:
-        raise RuntimeError("The registration could not be saved permanently. "+str(e))
+    if len(df) and any(df["email"].str.strip().str.lower()==email):
+        raise ValueError("This email address is already registered.")
+    merged=merge_records(df,pd.DataFrame([row]))
+    if not save_data(merged):
+        raise RuntimeError("The registration could not be saved.")
+    return True
 
 def load_programme():
     p=local_path("programme.csv")
@@ -326,11 +294,6 @@ with st.form("registration",clear_on_submit=True):
     consent=st.checkbox("I confirm the information is correct and consent to its use for conference administration.")
     submitted=st.form_submit_button("Complete Registration",use_container_width=True)
 if submitted:
-    storage_ok,storage_error=db_health()
-    if not storage_ok:
-        st.error("Registration is temporarily unavailable because secure persistent storage is not ready. Please contact the organizer.")
-        submitted=False
-if submitted:
     missing=[]
     if not name.strip(): missing.append("Full name")
     if not institution.strip(): missing.append("Institution / organization")
@@ -367,25 +330,21 @@ with st.expander("Organizer console"):
             st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
-            storage_ok,storage_error=db_health()
-            if storage_ok:
-                st.success("Registration storage: persistent database connected.")
-            else:
-                st.warning("Registration storage is not ready. "+storage_error)
+            st.success("Registration storage: Streamlit app storage active.")
             regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
+                st.caption("Use Download Excel backup regularly. Streamlit Community Cloud local files can reset when the app is redeployed or restarted.")
                 if st.button("Refresh registration master",use_container_width=False):
                     try:
-                        rows=db_request("GET","registrations?select=*&order=timestamp.asc",prefer="")
-                        fresh=normalize(pd.DataFrame(rows))
+                        fresh=load_data()
                         fresh.to_csv(local_path("registrations.csv"),index=False)
-                        st.session_state["master_refresh_message"]="Registration master refreshed from persistent database."
+                        st.session_state["master_refresh_message"]="Registration master refreshed."
                     except Exception as e:
                         st.session_state["master_refresh_error"]="Refresh failed: "+str(e)
                     st.rerun()
                 if st.session_state.pop("master_refresh_message",None):
-                    st.success("Registration master refreshed from persistent database.")
+                    st.success("Registration master refreshed.")
                 refresh_error=st.session_state.pop("master_refresh_error",None)
                 if refresh_error: st.error(refresh_error)
                 review=df.copy()
