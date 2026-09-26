@@ -21,20 +21,8 @@ def secret(name,default=""):
     try:return str(st.secrets[name])
     except Exception:return default
 
-def gh(method,path,payload=None):
-    token=secret("GITHUB_TOKEN")
-    if not token: raise RuntimeError("Permanent storage is not configured. Add GITHUB_TOKEN in Streamlit Secrets.")
-    data=json.dumps(payload).encode() if payload is not None else None
-    req=urllib.request.Request("https://api.github.com/repos/"+REPO+"/"+path,data=data,method=method,headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","User-Agent":"ConvergeX"})
-    try:
-        with urllib.request.urlopen(req,timeout=25) as r:return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        detail=""
-        try: detail=json.loads(e.read().decode()).get("message","")
-        except Exception: pass
-        if e.code==401: raise RuntimeError("Registration storage is not authorized. The organizer needs to refresh the private GitHub access token in Streamlit Secrets.")
-        if e.code==403: raise RuntimeError("Registration storage does not currently have permission to update the conference repository.")
-        raise RuntimeError("The registration service could not save this change"+(f": {detail}" if detail else "."))
+def storage_note():
+    return "Saved in the app data store. Use organizer Excel/CSV export for backup or repository archival."
 
 def normalize(df):
     if df is None: df=pd.DataFrame()
@@ -43,45 +31,45 @@ def normalize(df):
         if c not in df.columns:df[c]=""
     return df[FIELDS]
 
+def local_path(name):
+    import os
+    os.makedirs("app_data",exist_ok=True)
+    return "app_data/"+name
+
 def load_data():
+    p=local_path("registrations.csv")
     try:
+        if __import__("os").path.exists(p): return normalize(pd.read_csv(p,dtype=str))
         req=urllib.request.Request(RAW+"?v="+uuid.uuid4().hex,headers={"Cache-Control":"no-cache"})
         with urllib.request.urlopen(req,timeout=15) as r:
-            return normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str))
+            df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str)); df.to_csv(p,index=False); return df
     except Exception:return normalize(pd.DataFrame())
 
-def csv_blob(df):
-    return normalize(df).to_csv(index=False).encode("utf-8-sig")
+def csv_blob(df): return normalize(df).to_csv(index=False).encode("utf-8-sig")
 
 def excel_blob(df):
     out=BytesIO()
-    with pd.ExcelWriter(out,engine="openpyxl") as w:
-        normalize(df).to_excel(w,index=False,sheet_name="Registrations")
+    with pd.ExcelWriter(out,engine="openpyxl") as w: normalize(df).to_excel(w,index=False,sheet_name="Registrations")
     return out.getvalue()
 
-def save_data(df,message):
-    df=normalize(df)
-    meta=gh("GET","contents/"+DATA_PATH+"?ref=main")
-    payload={"message":message,"content":base64.b64encode(csv_blob(df)).decode(),"branch":"main","sha":meta["sha"]}
-    return gh("PUT","contents/"+DATA_PATH,payload)
+def save_data(df,message=""):
+    p=local_path("registrations.csv"); normalize(df).to_csv(p,index=False); return True
 
 def register(row):
-    for attempt in range(3):
-        df=load_data()
-        if any(df.email.str.lower()==row["email"].lower()):raise ValueError("This email address is already registered.")
-        try:
-            save_data(pd.concat([df,pd.DataFrame([row])],ignore_index=True),"Registration "+row["registration_id"])
-            return
-        except urllib.error.HTTPError as e:
-            if e.code in (409,422) and attempt<2:continue
-            raise
-
+    df=load_data()
+    if len(df) and any(df.email.str.lower()==row["email"].lower()): raise ValueError("This email address is already registered.")
+    save_data(pd.concat([df,pd.DataFrame([row])],ignore_index=True))
+    return True
 
 def load_programme():
+    p=local_path("programme.csv")
     try:
-        url="https://raw.githubusercontent.com/"+REPO+"/main/"+PROGRAMME_PATH+"?v="+uuid.uuid4().hex
-        with urllib.request.urlopen(url,timeout=12) as r:
-            x=pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna("")
+        if __import__("os").path.exists(p):
+            x=pd.read_csv(p,dtype=str).fillna("")
+        else:
+            url="https://raw.githubusercontent.com/"+REPO+"/main/"+PROGRAMME_PATH+"?v="+uuid.uuid4().hex
+            with urllib.request.urlopen(url,timeout=12) as r:x=pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna("")
+            x.to_csv(p,index=False)
         for c in PROGRAMME_FIELDS:
             if c not in x.columns:x[c]=""
         return x[PROGRAMME_FIELDS]
@@ -90,10 +78,8 @@ def load_programme():
 def save_programme(pdf):
     for c in PROGRAMME_FIELDS:
         if c not in pdf.columns:pdf[c]=""
-    pdf=pdf[PROGRAMME_FIELDS].fillna("")
-    meta=gh("GET","contents/"+PROGRAMME_PATH+"?ref=main")
-    raw=pdf.to_csv(index=False).encode("utf-8-sig")
-    return gh("PUT","contents/"+PROGRAMME_PATH,{"message":"Update conference programme","content":base64.b64encode(raw).decode(),"branch":"main","sha":meta["sha"]})
+    pdf[PROGRAMME_FIELDS].fillna("").to_csv(local_path("programme.csv"),index=False)
+    return True
 
 def admin_ok(u,p):
     au=secret("ADMIN_USERNAME","ramesh")
@@ -112,7 +98,7 @@ CSS="""<style>
 html{scroll-behavior:smooth}.stApp{background:radial-gradient(circle at 15% 5%,rgba(80,228,255,.12),transparent 23%),radial-gradient(circle at 86% 8%,rgba(243,199,95,.11),transparent 22%),linear-gradient(145deg,#030912,#07192b 55%,#04101c);color:var(--text)}
 .block-container{max-width:1400px;padding-top:1rem}#MainMenu,footer{visibility:hidden}.stApp header{background:transparent}
 .nav{position:sticky;top:.5rem;z-index:99;display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border:1px solid rgba(255,255,255,.09);border-radius:18px;background:rgba(3,10,19,.75);backdrop-filter:blur(18px)}
-.logo{font-weight:950;font-size:1.2rem}.navtext a{color:#b9cadb;text-decoration:none;margin:0 5px}.navtext a:hover{color:var(--cyan)}.logo span{color:var(--cyan)}.navtext{color:#aebfd0;font-size:.8rem;letter-spacing:.06em}
+.logo{font-weight:950;font-size:1.2rem}.logo span{color:var(--cyan)}.navtext{display:flex;gap:7px;flex-wrap:wrap;justify-content:center}.navtext a{color:#d6e4ef;text-decoration:none;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);font-size:.72rem;font-weight:800;letter-spacing:.04em;transition:.2s}.navtext a:hover{color:#06111f;background:var(--cyan);transform:translateY(-1px)}
 .hero{position:relative;overflow:hidden;margin-top:16px;min-height:610px;padding:62px;border:1px solid rgba(255,255,255,.09);border-radius:34px;background:radial-gradient(circle at 80% 45%,rgba(80,228,255,.16),transparent 22%),linear-gradient(110deg,rgba(3,10,18,.97),rgba(5,20,35,.74))}
 .hero:after{content:"";position:absolute;width:520px;height:520px;border-radius:50%;right:-120px;top:50px;border:1px solid rgba(80,228,255,.23);box-shadow:0 0 80px rgba(80,228,255,.07);animation:pulse 5s ease-in-out infinite}
 @keyframes pulse{50%{transform:scale(1.06);opacity:.62}}@keyframes float{50%{transform:translateY(-9px)}}.k{color:var(--gold);font-size:.78rem;font-weight:900;letter-spacing:.18em}.hero h1{font-size:clamp(3rem,6vw,6.1rem);line-height:.92;margin:.7rem 0 1.1rem;max-width:1000px}.gold{color:var(--gold)}.cyan{color:var(--cyan)}.lead{font-size:1.1rem;line-height:1.65;color:#d4e0eb;max-width:780px}
@@ -128,7 +114,8 @@ def heading(a,b="",anchor=""):
     marker=f'<div id="{anchor}" style="scroll-margin-top:85px"></div>' if anchor else ""
     st.markdown(marker+f'<div class="title">{a}</div>'+ (f'<div class="sub">{b}</div>' if b else ""),unsafe_allow_html=True)
 
-st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div class="navtext"><a href="#experience">EXPERIENCE</a> · <a href="#people">PEOPLE</a> · <a href="#programme">PROGRAMME</a> · <a href="#venue">VENUE</a> · <a href="#register">REGISTER</a> · <a href="#status">STATUS</a></div><div class="badge">2026</div></div>',unsafe_allow_html=True)
+st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div class="navtext"><a href="#home">Home</a><a href="#experience">Experience</a><a href="#people">People</a><a href="#programme">Programme</a><a href="#venue">Venue</a><a href="#register">Register</a><a href="#status">Status</a><a href="#admin">Organizer</a></div><div class="badge">2026</div></div>',unsafe_allow_html=True)
+st.markdown('<div id="home" style="scroll-margin-top:85px"></div>',unsafe_allow_html=True)
 st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{len(df)}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role=="Keynote Speaker"])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
 
 heading("Living Constellation","Six connected pathways through one conference experience.","experience")
@@ -190,7 +177,7 @@ if submitted:
         rid="STDI-2026-"+uuid.uuid4().hex[:6].upper()
         row={c:"" for c in FIELDS};row.update({"registration_id":rid,"timestamp":datetime.now().isoformat(timespec="seconds"),"name":name.strip(),"designation":designation.strip(),"institution":institution.strip(),"email":email.strip(),"mobile":mobile.strip(),"country":country.strip(),"role":role,"theme":theme,"talk_title":talk.strip(),"profile":profile.strip(),"status":"Pending","payment":"Pending","accommodation":"","certificate":""})
         try:
-            register(row);st.success(f"Registration complete. Your permanent Registration ID is {rid}.");st.info("Your entry is pending organizer approval before it appears in the public directory.")
+            register(row);st.success(f"Registration complete. Your Registration ID is {rid}.");st.info("Your entry is pending organizer approval before it appears in the public directory.")
         except ValueError as e:st.warning(str(e))
         except Exception as e:st.error(str(e))
 
@@ -204,7 +191,7 @@ if q:
         c1,c2,c3,c4=st.columns(4);c1.metric("Status",r.status or "Pending");c2.metric("Payment",r.payment or "Pending");c3.metric("Accommodation",r.accommodation or "—");c4.metric("Certificate",r.certificate or "—")
         st.caption(f"{r['name']} · {r.role} · {r.institution}")
 
-heading("Administration","Organizer-only control for registrations and the hour-wise programme.")
+heading("Administration","Organizer-only control for registrations and the hour-wise programme.","admin")
 with st.expander("Organizer console"):
     u=st.text_input("Admin username",key="admin_u")
     p=st.text_input("Admin password",type="password",key="admin_p")
@@ -220,7 +207,7 @@ with st.expander("Organizer console"):
                 c1,c2,c3=st.columns(3)
                 with c1:
                     if st.button("Save master",type="primary",use_container_width=True):
-                        try: save_data(edited,"Organizer update registrations"); st.success("Registration master saved to GitHub.")
+                        try: save_data(edited,"Organizer update registrations"); st.success("Registration master saved.")
                         except Exception as e: st.error(str(e))
                 with c2:
                     st.download_button("Download Excel",excel_blob(edited),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
@@ -232,7 +219,7 @@ with st.expander("Organizer console"):
                         incoming=normalize(pd.read_excel(upload,dtype=str) if upload.name.lower().endswith(".xlsx") else pd.read_csv(upload,dtype=str))
                         st.dataframe(incoming,use_container_width=True,hide_index=True)
                         if st.button("Replace master with uploaded file"):
-                            save_data(incoming,"Replace registrations from organizer workbook"); st.success("Corrected master saved.")
+                            save_data(incoming); st.success("Corrected master saved.")
                     except Exception as e: st.error("Please check the workbook format. "+str(e))
                 a,b,c,d=st.columns(4);a.metric("Total",len(df));b.metric("Pending",sum(df.status.str.lower()=="pending"));c.metric("Approved",len(pub));d.metric("Keynotes",sum(df.role=="Keynote Speaker"))
             with progtab:
@@ -241,7 +228,7 @@ with st.expander("Organizer console"):
                 if ped.empty: ped=pd.DataFrame([{"time":"","title":"","description":"","status":"Draft"}],columns=PROGRAMME_FIELDS)
                 ped=st.data_editor(ped,num_rows="dynamic",use_container_width=True,hide_index=True,column_config={"time":st.column_config.TextColumn("Time",help="Example: 09:30 AM"),"title":st.column_config.TextColumn("Session title"),"description":st.column_config.TextColumn("Description"),"status":st.column_config.SelectboxColumn("Status",options=["Draft","Published"])},key="programme_editor")
                 if st.button("Save programme",type="primary",use_container_width=True):
-                    try: save_programme(ped); st.success("Programme saved. Published rows will appear in the Programme section.")
+                    try: save_programme(ped); st.success("Programme saved. Published rows will appear in the Programme section after refresh.")
                     except Exception as e: st.error(str(e))
         else:
             st.error("Invalid organizer credentials.")
