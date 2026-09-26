@@ -105,7 +105,7 @@ html{scroll-behavior:smooth}.stApp{background:radial-gradient(circle at 15% 5%,r
 .metrics,.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0}.metric,.card{background:var(--glass);border:1px solid rgba(255,255,255,.085);border-radius:21px;padding:20px;backdrop-filter:blur(8px)}.metric{text-align:center}.metric b{font-size:1.7rem;color:var(--cyan)}.metric span{display:block;color:var(--muted);font-size:.77rem}.card{min-height:145px;transition:.25s}.card:hover{transform:translateY(-4px);border-color:rgba(80,228,255,.32)}.card p{color:#b5c6d6;line-height:1.5}.title{font-size:2rem;font-weight:950;margin:2.5rem 0 .25rem}.sub{color:var(--muted);margin-bottom:1.1rem}
 .const{height:475px;position:relative;border:1px solid rgba(255,255,255,.08);border-radius:30px;background:radial-gradient(circle at center,rgba(80,228,255,.13),transparent 35%);overflow:hidden}.core,.orb{position:absolute;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:900}.core{width:160px;height:160px;left:calc(50% - 80px);top:158px;border:1px solid var(--gold);background:#0a2033;box-shadow:0 0 50px rgba(243,199,95,.13)}.orb{width:108px;height:108px;border:1px solid rgba(80,228,255,.42);background:#081a2b;animation:float 4s ease-in-out infinite}.o1{left:8%;top:65px}.o2{left:29%;top:25px}.o3{right:29%;top:25px}.o4{right:8%;top:65px}.o5{left:20%;bottom:38px}.o6{right:20%;bottom:38px}
 .badge{display:inline-block;padding:5px 9px;border-radius:999px;background:rgba(243,199,95,.12);color:var(--gold);font-size:.72rem;font-weight:900}.person{font-size:1.15rem;font-weight:900;margin:.5rem 0}.muted{color:var(--muted)}.timeline{border-left:2px solid rgba(80,228,255,.25);padding-left:24px}.slot{position:relative;padding:10px 0 18px}.slot:before{content:"";position:absolute;left:-30px;top:17px;width:10px;height:10px;border-radius:50%;background:var(--gold)}
-@media(max-width:900px){.metrics,.cards{grid-template-columns:1fr}.hero{padding:35px 22px;min-height:auto}.navtext{display:none}.const{height:620px}.o1{left:4%;top:45px}.o2{right:4%;left:auto;top:45px}.o3{left:4%;top:410px}.o4{right:4%;top:410px}.o5{left:4%;bottom:15px}.o6{right:4%;bottom:15px}}
+.twin-shell{position:relative;min-height:620px;border:1px solid rgba(255,255,255,.09);border-radius:30px;overflow:hidden;background:radial-gradient(circle at 50% 48%,rgba(80,228,255,.12),transparent 30%),linear-gradient(145deg,rgba(4,16,28,.95),rgba(6,23,39,.72));padding:22px}.twin-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}.twin-map{position:relative;min-height:520px;border-radius:24px;background-image:radial-gradient(rgba(80,228,255,.16) 1px,transparent 1px);background-size:26px 26px;border:1px solid rgba(255,255,255,.06)}.twin-core{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:150px;height:150px;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:950;background:radial-gradient(circle,#173d5b,#081625 68%);border:1px solid var(--gold);box-shadow:0 0 55px rgba(243,199,95,.2);z-index:3}.twin-node{position:absolute;width:105px;height:105px;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;font-size:.78rem;font-weight:850;background:#0a2033;border:1px solid rgba(80,228,255,.4);box-shadow:0 0 28px rgba(80,228,255,.08);animation:float 5s ease-in-out infinite}.tn1{left:8%;top:10%}.tn2{left:39%;top:5%}.tn3{right:8%;top:12%}.tn4{left:8%;bottom:10%}.tn5{left:39%;bottom:5%}.tn6{right:8%;bottom:12%}.twin-side{display:flex;flex-direction:column;gap:12px}.insight{padding:18px;border-radius:18px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07)}.insight b{font-size:1.45rem;color:var(--cyan);display:block}.insight small{color:var(--muted)}@media(max-width:900px){.twin-grid{grid-template-columns:1fr}.twin-map{min-height:560px}.twin-node{width:90px;height:90px}.tn1{left:3%}.tn3{right:3%}.tn4{left:3%}.tn6{right:3%}}@media(max-width:900px){.metrics,.cards{grid-template-columns:1fr}.hero{padding:35px 22px;min-height:auto}.navtext{display:none}.const{height:620px}.o1{left:4%;top:45px}.o2{right:4%;left:auto;top:45px}.o3{left:4%;top:410px}.o4{right:4%;top:410px}.o5{left:4%;bottom:15px}.o6{right:4%;bottom:15px}}
 </style>"""
 st.markdown(CSS,unsafe_allow_html=True)
 df=load_data(); programme=load_programme(); pub=approved(df); days=max((EVENT_DATE-datetime.now()).days,0)
@@ -114,7 +114,7 @@ def heading(a,b="",anchor=""):
     marker=f'<div id="{anchor}" style="scroll-margin-top:85px"></div>' if anchor else ""
     st.markdown(marker+f'<div class="title">{a}</div>'+ (f'<div class="sub">{b}</div>' if b else ""),unsafe_allow_html=True)
 
-st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div class="navtext"><a href="#home">Home</a><a href="#experience">Experience</a><a href="#people">People</a><a href="#programme">Programme</a><a href="#venue">Venue</a><a href="#register">Register</a><a href="#status">Status</a><a href="#admin">Organizer</a></div><div class="badge">2026</div></div>',unsafe_allow_html=True)
+st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div class="navtext"><a href="#home">Home</a><a href="#experience">Experience</a><a href="#people">People</a><a href="#twin">Digital Twin</a><a href="#programme">Programme</a><a href="#venue">Venue</a><a href="#register">Register</a><a href="#status">Status</a><a href="#admin">Organizer</a></div><div class="badge">2026</div></div>',unsafe_allow_html=True)
 st.markdown('<div id="home" style="scroll-margin-top:85px"></div>',unsafe_allow_html=True)
 st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{len(df)}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role=="Keynote Speaker"])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
 
@@ -140,6 +140,47 @@ for tab,roles in zip(role_tabs,[["Keynote Speaker"],["Invited Speaker"],[x for x
                 with cols[i%3]:
                     talk=f'<p><b>{safe(r.talk_title)}</b></p>' if r.talk_title else ""
                     st.markdown(f'<div class="card"><span class="badge">{safe(r.role).upper()}</span><div class="person">{safe(r["name"])}</div><div class="muted">{safe(r.designation)}<br>{safe(r.institution)} · {safe(r.country)}</div>{talk}<p>{safe(r.profile)}</p></div>',unsafe_allow_html=True)
+
+heading("Conference Digital Twin","A live map generated from approved conference data — no duplicate entry and no dummy participants.","twin")
+twin_people=pub.copy()
+theme_counts={t:int((twin_people.theme==t).sum()) for t in THEMES}
+inst_count=int(twin_people.institution[twin_people.institution.str.strip()!=""].nunique()) if len(twin_people) else 0
+role_count=int(twin_people.role[twin_people.role.str.strip()!=""].nunique()) if len(twin_people) else 0
+talk_count=int((twin_people.talk_title.str.strip()!="").sum()) if len(twin_people) else 0
+active_themes=sum(1 for v in theme_counts.values() if v>0)
+top_theme=max(theme_counts,key=theme_counts.get) if theme_counts and max(theme_counts.values(),default=0)>0 else "Awaiting approved registrations"
+labels=["Strategy","AI & GenAI","DeepTech","Research","IP Strategy","Leadership"]
+counts=[theme_counts[t] for t in THEMES]
+nodes="".join(f'<div class="twin-node tn{i+1}">{safe(labels[i])}<br><span class="cyan">{counts[i]}</span></div>' for i in range(6))
+st.markdown(f'''<div class="twin-shell"><div class="twin-grid"><div class="twin-map"><div class="twin-core">CONVERGEX<br>DIGITAL TWIN<br><span class="cyan">{len(twin_people)} PEOPLE</span></div>{nodes}</div><div class="twin-side"><div class="insight"><b>{len(twin_people)}</b><small>approved people represented</small></div><div class="insight"><b>{inst_count}</b><small>institutions connected</small></div><div class="insight"><b>{active_themes}/6</b><small>active thematic pathways</small></div><div class="insight"><b>{talk_count}</b><small>proposed talks connected</small></div><div class="insight"><b>{safe(top_theme)}</b><small>largest represented theme</small></div></div></div></div>''',unsafe_allow_html=True)
+
+if twin_people.empty:
+    st.info("The Digital Twin will activate automatically as the organizer approves registrations.")
+else:
+    twin_tabs=st.tabs(["Explore connections","Theme intelligence","Institution network"])
+    with twin_tabs[0]:
+        person_options=["All approved participants"]+sorted(twin_people["name"].tolist())
+        who=st.selectbox("Explore a participant",person_options,key="twin_person")
+        if who=="All approved participants":
+            st.dataframe(twin_people[["name","role","institution","theme","talk_title"]],use_container_width=True,hide_index=True)
+        else:
+            r=twin_people[twin_people["name"]==who].iloc[0]
+            a,b,c=st.columns(3)
+            a.metric("Role",r.role);b.metric("Institution",r.institution or "—");c.metric("Theme",r.theme or "—")
+            if r.talk_title: st.success("Connected talk: "+r.talk_title)
+            related=twin_people[(twin_people.theme==r.theme)&(twin_people["name"]!=who)]
+            if len(related): st.caption("Theme connections: "+", ".join(related["name"].tolist()))
+            else: st.caption("No other approved participant currently shares this theme.")
+    with twin_tabs[1]:
+        intelligence=pd.DataFrame({"Theme":THEMES,"Approved people":counts}).sort_values("Approved people",ascending=False)
+        st.dataframe(intelligence,use_container_width=True,hide_index=True)
+        gaps=intelligence[intelligence["Approved people"]==0]["Theme"].tolist()
+        if gaps: st.info("Currently unrepresented pathways: "+", ".join(gaps))
+        else: st.success("All six conference pathways currently have approved representation.")
+    with twin_tabs[2]:
+        inst=twin_people[twin_people.institution.str.strip()!=""].groupby("institution").agg(People=("name","count"),Themes=("theme","nunique"),Roles=("role","nunique")).reset_index().sort_values(["People","Themes"],ascending=False)
+        st.dataframe(inst,use_container_width=True,hide_index=True)
+        if len(inst): st.caption("Institutions with participation across more themes form stronger cross-theme bridges in the live twin.")
 
 heading("Programme","The organizer publishes the schedule from the programme editor.","programme")
 if programme.empty or not any(programme.title.str.strip()):
