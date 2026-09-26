@@ -176,6 +176,20 @@ def github_storage_health(verify_write=False):
     except Exception as e:
         return False,str(e)
 
+def public_report_blob(df):
+    out=BytesIO()
+    public_cols=["name","designation","institution","country","role","theme","talk_title","profile"]
+    x=normalize(df)[public_cols].copy()
+    x.columns=["Name","Designation","Institution","Country","Role","Theme","Talk title","Profile"]
+    with pd.ExcelWriter(out,engine="openpyxl") as w:
+        x.to_excel(w,index=False,sheet_name="Approved Participants")
+        ws=w["Approved Participants"]
+        ws.freeze_panes="A2"
+        ws.auto_filter.ref=ws.dimensions
+        widths={"A":28,"B":24,"C":38,"D":16,"E":24,"F":42,"G":42,"H":55}
+        for col,width in widths.items(): ws.column_dimensions[col].width=width
+    return out.getvalue()
+
 def load_programme():
     p=local_path("programme.csv")
     try:
@@ -236,8 +250,17 @@ st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div
 st.markdown('<div id="home" style="scroll-margin-top:85px"></div>',unsafe_allow_html=True)
 st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{registration_count}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role.str.lower().str.contains("keynote",na=False)])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
 
-heading("Living Constellation","Six connected pathways through one conference experience.","experience")
-st.markdown("""<div class="const"><div class="core">CONCLAVE<br>2026</div><div class="orb o1">AI</div><div class="orb o2">DeepTech</div><div class="orb o3">Research</div><div class="orb o4">Enterprise</div><div class="orb o5">IP Strategy</div><div class="orb o6">Leadership</div></div>""",unsafe_allow_html=True)
+heading("Conclave Pulse","A live snapshot of the conference as participation grows.","experience")
+pulse_themes=sum(1 for t in THEMES if int((pub.theme==t).sum())>0)
+pulse_institutions=int(pub.institution[pub.institution.str.strip()!=""].nunique()) if len(pub) else 0
+pulse_countries=int(pub.country[pub.country.str.strip()!=""].nunique()) if len(pub) else 0
+pulse_roles=int(pub.role[pub.role.str.strip()!=""].nunique()) if len(pub) else 0
+st.markdown(f'''<div class="cards">
+<div class="card"><span class="badge">PEOPLE</span><h2>{len(pub)}</h2><p>approved participants</p></div>
+<div class="card"><span class="badge">INSTITUTIONS</span><h2>{pulse_institutions}</h2><p>organizations represented</p></div>
+<div class="card"><span class="badge">COUNTRIES</span><h2>{pulse_countries}</h2><p>countries represented</p></div>
+<div class="card"><span class="badge">PATHWAYS</span><h2>{pulse_themes}/{len(THEMES)}</h2><p>active focus areas</p></div>
+</div>''',unsafe_allow_html=True)
 
 heading("Focus Areas","Explore the conference once; participant and speaker views below are generated from the same master record.")
 short=["Strategy","AI & GenAI","DeepTech","Research & Start-ups","IP & Patents","Leadership"]
@@ -246,23 +269,42 @@ st.markdown('<div class="cards">'+"".join(f'<div class="card"><span class="badge
 heading("Conference Leadership")
 st.markdown("""<div class="card"><span class="badge">CONCLAVE ORGANISER</span><div class="person">Ramesh Chandra Panda</div><p>Chairman & Chief Scientist, WEGROW · IPR Head of 12 Universities and 58 Engineering/Management/Law Colleges · Conclave Organiser · Editor of 7 Scopus-indexed journals</p></div>""",unsafe_allow_html=True)
 
-heading("People","Organizer-approved registrations automatically populate the appropriate role view.","people")
-role_tabs=st.tabs(["Keynotes","Invited Speakers","Delegates & Participants"])
+heading("People","Browse organizer-approved participants without turning the main page into a long directory.","people")
 keynote_roles=[x for x in ROLES if "keynote" in x.lower()]
 invited_roles=[x for x in ROLES if "invited" in x.lower() and "keynote" not in x.lower()]
 other_roles=[x for x in ROLES if x not in keynote_roles+invited_roles]
-for tab,roles in zip(role_tabs,[keynote_roles,invited_roles,other_roles]):
-    with tab:
-        people=pub[pub.role.isin(roles)]
-        if people.empty:st.info("No organizer-approved entries in this category yet.")
-        else:
-            cols=st.columns(3)
-            for i,(_,r) in enumerate(people.iterrows()):
-                with cols[i%3]:
-                    talk=f'<p><b>{safe(r.talk_title)}</b></p>' if r.talk_title else ""
-                    st.markdown(f'<div class="card"><span class="badge">{safe(r.role).upper()}</span><div class="person">{safe(r["name"])}</div><div class="muted">{safe(r.designation)}<br>{safe(r.institution)} · {safe(r.country)}</div>{talk}<p>{safe(r.profile)}</p></div>',unsafe_allow_html=True)
+people_groups=[
+    ("Keynotes",pub[pub.role.isin(keynote_roles)]),
+    ("Invited Speakers",pub[pub.role.isin(invited_roles)]),
+    ("Delegates & Participants",pub[pub.role.isin(other_roles)])
+]
+pc1,pc2,pc3=st.columns(3)
+for col,(label,group) in zip([pc1,pc2,pc3],people_groups):
+    with col:
+        st.markdown(f'<div class="card"><span class="badge">{safe(label).upper()}</span><h2>{len(group)}</h2><p>approved records</p></div>',unsafe_allow_html=True)
 
-heading("Conference Digital Twin","Explore the living connections across people, institutions, ideas, talks and the conference programme.","twin")
+@st.dialog("Approved People Directory",width="large")
+def people_directory():
+    category=st.selectbox("Category",["All approved people","Keynotes","Invited Speakers","Delegates & Participants"],key="people_directory_category")
+    search=st.text_input("Search",placeholder="Name, institution, country, role or theme",key="people_directory_search")
+    if category=="Keynotes": view=people_groups[0][1].copy()
+    elif category=="Invited Speakers": view=people_groups[1][1].copy()
+    elif category=="Delegates & Participants": view=people_groups[2][1].copy()
+    else: view=pub.copy()
+    q=search.strip().lower()
+    if q and len(view):
+        mask=view[["name","designation","institution","country","role","theme","talk_title"]].fillna("").astype(str).apply(lambda c:c.str.lower().str.contains(q,regex=False)).any(axis=1)
+        view=view[mask]
+    st.caption(f"{len(view)} approved people shown")
+    show_cols=["name","designation","institution","country","role","theme","talk_title"]
+    st.dataframe(view[show_cols],use_container_width=True,hide_index=True,height=430)
+    st.download_button("Download directory report",public_report_blob(view),"ConvergeX_Approved_People.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+
+if st.button(f"Open People Directory · {len(pub)} approved",use_container_width=True,type="primary"):
+    people_directory()
+st.download_button("Download approved people report",public_report_blob(pub),"ConvergeX_Approved_People.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+
+heading("Conference Digital Twin","A live intelligence layer showing how approved people connect institutions, themes, roles and talks.","twin")
 twin_people=pub.copy()
 theme_counts={t:int((twin_people.theme==t).sum()) for t in THEMES}
 inst_count=int(twin_people.institution[twin_people.institution.str.strip()!=""].nunique()) if len(twin_people) else 0
@@ -270,12 +312,20 @@ role_count=int(twin_people.role[twin_people.role.str.strip()!=""].nunique()) if 
 talk_count=int((twin_people.talk_title.str.strip()!="").sum()) if len(twin_people) else 0
 active_themes=sum(1 for v in theme_counts.values() if v>0)
 top_theme=max(theme_counts,key=theme_counts.get) if theme_counts and max(theme_counts.values(),default=0)>0 else "Awaiting approved registrations"
-labels=["Strategy","AI & GenAI","DeepTech","Research","IP Strategy","Leadership"]
-display_themes=(THEMES+["","","","","",""])[:6]
-counts=[theme_counts.get(t,0) if t else 0 for t in display_themes]
-node_labels=[labels[i] if i>=len(THEMES) else (THEMES[i][:22]+"…" if len(THEMES[i])>22 else THEMES[i]) for i in range(6)]
-nodes="".join(f'<div class="twin-node tn{i+1}">{safe(node_labels[i])}<br><span class="cyan">{counts[i]}</span></div>' for i in range(6))
-st.markdown(f'''<div class="twin-shell"><div class="twin-grid"><div class="twin-map"><div class="twin-core">CONVERGEX<br>DIGITAL TWIN<br><span class="cyan">{len(twin_people)} PEOPLE</span></div>{nodes}</div><div class="twin-side"><div class="insight"><b>{len(twin_people)}</b><small>approved people represented</small></div><div class="insight"><b>{inst_count}</b><small>institutions connected</small></div><div class="insight"><b>{active_themes}/{len(THEMES)}</b><small>active thematic pathways</small></div><div class="insight"><b>{talk_count}</b><small>proposed talks connected</small></div><div class="insight"><b>{safe(top_theme)}</b><small>largest represented theme</small></div></div></div></div>''',unsafe_allow_html=True)
+t1,t2,t3,t4=st.columns(4)
+t1.metric("Approved people",len(twin_people))
+t2.metric("Institutions",inst_count)
+t3.metric("Active pathways",f"{active_themes}/{len(THEMES)}")
+t4.metric("Connected talks",talk_count)
+if len(twin_people):
+    st.markdown("#### Theme signal")
+    max_count=max(theme_counts.values(),default=1) or 1
+    signal_html='<div class="card">'
+    for theme in THEMES:
+        n=theme_counts.get(theme,0); pct=max(2,int(100*n/max_count)) if n else 0
+        signal_html+=f'<div style="display:grid;grid-template-columns:minmax(210px,2fr) 6fr 50px;gap:12px;align-items:center;margin:12px 0"><span>{safe(theme)}</span><div style="height:10px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden"><div style="width:{pct}%;height:100%;background:linear-gradient(90deg,var(--cyan),var(--gold));border-radius:99px"></div></div><b class="cyan">{n}</b></div>'
+    st.markdown(signal_html+'</div>',unsafe_allow_html=True)
+    st.caption("Largest represented theme: "+top_theme)
 
 if twin_people.empty:
     st.info("The Digital Twin will activate automatically as the organizer approves registrations.")
@@ -285,7 +335,7 @@ else:
         person_options=["All approved participants"]+sorted(twin_people["name"].tolist())
         who=st.selectbox("Explore a participant",person_options,key="twin_person")
         if who=="All approved participants":
-            st.dataframe(twin_people[["name","role","institution","theme","talk_title"]],use_container_width=True,hide_index=True)
+            st.info("Use the People Directory above to browse or download the full participant list. Select one person here to inspect their live connections.")
         else:
             r=twin_people[twin_people["name"]==who].iloc[0]
             a,b,c=st.columns(3)
