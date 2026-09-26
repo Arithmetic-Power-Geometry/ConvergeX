@@ -158,13 +158,20 @@ def register(row):
     merged=merge_records(df,pd.DataFrame([row]))
     if not save_data(merged,"New ConvergeX registration "+str(row["registration_id"])):
         raise RuntimeError("Registration could not be stored permanently. Please try again.")
+    verify,_=github_read_registrations()
+    if not any(verify["registration_id"].astype(str)==str(row["registration_id"])):
+        raise RuntimeError("GitHub did not confirm the saved registration.")
+    st.session_state["registrations_master"]=verify.copy()
     return True
 
-def github_storage_health():
-    if not secret("GITHUB_TOKEN").strip():
+def github_storage_health(verify_write=False):
+    token=secret("GITHUB_TOKEN").strip()
+    if not token:
         return False,"GitHub token is not configured."
     try:
-        github_read_registrations()
+        df,sha=github_read_registrations()
+        if verify_write:
+            github_write_registrations(df,"Verify ConvergeX registration storage")
         return True,""
     except Exception as e:
         return False,str(e)
@@ -331,9 +338,9 @@ with st.form("registration",clear_on_submit=True):
     consent=st.checkbox("I confirm the information is correct and consent to its use for conference administration.")
     submitted=st.form_submit_button("Complete Registration",use_container_width=True)
 if submitted:
-    storage_ok,storage_error=github_storage_health()
+    storage_ok,storage_error=github_storage_health(verify_write=True)
     if not storage_ok:
-        st.error("Registration is temporarily unavailable because permanent storage is not connected. Please contact the organizer.")
+        st.error("Registration is temporarily unavailable because permanent GitHub storage cannot write. Please contact the organizer.")
         submitted=False
 if submitted:
     missing=[]
@@ -372,11 +379,13 @@ with st.expander("Organizer console"):
             st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
-            storage_ok,storage_error=github_storage_health()
+            storage_ok,storage_error=github_storage_health(verify_write=True)
             if storage_ok:
-                st.success("Registration storage: GitHub master connected.")
+                st.success("Registration storage: GitHub read/write verified.")
             else:
-                st.error("Registration storage is not connected. Check GITHUB_TOKEN and repository permission.")
+                st.error("Registration storage cannot write to GitHub. Check GITHUB_TOKEN → ConvergeX → Contents: Read and write.")
+                if storage_error:
+                    st.caption("Storage check: "+storage_error[:260])
             regtab,approvedtab,progtab,optiontab=st.tabs(["Pending / Review","Approved","Programme editor","Registration options"])
             with regtab:
                 st.caption("Review new registrations here. Set Publication status to Approved and save; approved records move to the Approved tab.")
@@ -437,7 +446,9 @@ with st.expander("Organizer console"):
                                     remote_saved=save_data(combined,"Update registration master",deleted_ids=deleted_ids)
                                     if not remote_saved:
                                         raise RuntimeError(st.session_state.get("last_remote_error","Repository write did not complete."))
-                                    st.success("Changes saved to the conference master. Approved registrations are now published.")
+                                    confirmed,_=github_read_registrations()
+                                    st.session_state["registrations_master"]=confirmed.copy()
+                                    st.success("Changes saved and verified in GitHub. Approved registrations are now published.")
                                     st.rerun()
                             except Exception as e:st.error("Could not save the registration sheet. "+str(e))
                     with c2:
@@ -505,7 +516,9 @@ with st.expander("Organizer console"):
                             merged=merge_records(master,changed)
                             if not save_data(merged,deleted_ids=list(delete_ids)):
                                 raise RuntimeError(st.session_state.get("last_remote_error","Save failed."))
-                            st.success("Approved registrations updated.")
+                            confirmed,_=github_read_registrations()
+                            st.session_state["registrations_master"]=confirmed.copy()
+                            st.success("Approved registrations updated and verified in GitHub.")
                             st.rerun()
                         except Exception as e:
                             st.error("Could not save approved registrations. "+str(e))
