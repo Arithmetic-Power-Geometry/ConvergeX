@@ -125,17 +125,25 @@ def excel_blob(df):
 def save_data(df,message="Update ConvergeX registrations"):
     clean=normalize(df)
     clean.to_csv(local_path("registrations.csv"),index=False)
-    try:
-        github_write_csv(clean,DATA_PATH,message)
-    except Exception:
-        pass
-    return True
+    remote_saved=False
+    remote_error=""
+    if github_token():
+        try:
+            remote_saved=github_write_csv(clean,DATA_PATH,message)
+        except Exception as e:
+            remote_error=str(e)
+    st.session_state["last_remote_saved"]=remote_saved
+    st.session_state["last_remote_error"]=remote_error
+    return remote_saved
 
 def register(row):
     df=load_data()
     if len(df) and any(df.email.str.lower()==row["email"].lower()): raise ValueError("This email address is already registered.")
-    save_data(pd.concat([df,pd.DataFrame([row])],ignore_index=True),"Add conference registration "+row["registration_id"])
-    return True
+    merged=normalize(pd.concat([df,pd.DataFrame([row])],ignore_index=True))
+    if not any(merged.registration_id==row["registration_id"]):
+        raise ValueError("Registration could not be added to the master record.")
+    remote_saved=save_data(merged,"Add conference registration "+row["registration_id"])
+    return remote_saved
 
 def load_programme():
     p=local_path("programme.csv")
@@ -281,6 +289,14 @@ else:
 heading("Venue","A single destination for the conclave.","venue")
 st.markdown("""<div class="cards"><div class="card"><span class="badge">LOCATION</span><h3>The Sanihara Hotel & Resort</h3><p>Wayanad, Kerala, India</p></div><div class="card"><span class="badge">DATE</span><h3>25 October 2026</h3><p>Strategic technology, research, innovation and collaboration.</p></div><div class="card"><span class="badge">FORMAT</span><h3>In-person Conclave</h3><p>Plenary exchange, thematic sessions and professional networking.</p></div><div class="card"><span class="badge">AUDIENCE</span><h3>Cross-disciplinary</h3><p>Academia · Research · Industry · Entrepreneurship · Technology · IP</p></div></div>""",unsafe_allow_html=True)
 
+receipt=st.session_state.pop("registration_receipt",None)
+if receipt:
+    st.success("Registration complete. Your Registration ID is "+receipt["id"]+".")
+    if receipt["remote"]:
+        st.info("Registration saved to the conference master. The organizer can now review it.")
+    else:
+        st.warning("Registration is saved in this app session, but repository persistence did not complete. Please inform the organizer before closing the app.")
+
 heading("Register","Submit once. Your role determines the directory in which you appear after approval.","register")
 with st.form("registration",clear_on_submit=True):
     a,b=st.columns(2)
@@ -302,7 +318,9 @@ if submitted:
         rid="STDI-2026-"+uuid.uuid4().hex[:6].upper()
         row={c:"" for c in FIELDS};row.update({"registration_id":rid,"timestamp":datetime.now().isoformat(timespec="seconds"),"name":name.strip(),"designation":designation.strip(),"institution":institution.strip(),"email":email.strip(),"mobile":mobile.strip(),"country":country.strip(),"role":role,"theme":theme,"talk_title":talk.strip(),"profile":profile.strip(),"status":"Pending","payment":"Pending","accommodation":"","certificate":""})
         try:
-            register(row);st.success(f"Registration complete. Your Registration ID is {rid}.");st.info("Registration received. The organizer will review it before publication in the conference directory.")
+            remote_saved=register(row)
+            st.session_state["registration_receipt"]={"id":rid,"remote":remote_saved}
+            st.rerun()
         except ValueError as e:st.warning(str(e))
         except Exception as e:st.error(str(e))
 
@@ -326,12 +344,18 @@ with st.expander("Organizer console"):
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
             if github_token():
-                st.caption("Data store: repository-backed master with local cache.")
+                try:
+                    _remote_check,_remote_sha=github_read_csv()
+                    st.caption("Data store: repository connected with local cache.")
+                except Exception:
+                    st.warning("Repository token is configured, but the registration master cannot currently be read. Registrations will remain in local cache until repository access is fixed.")
             else:
                 st.caption("Data store: local app storage. Add GITHUB_TOKEN in Streamlit Secrets for repository persistence across redeployments.")
             regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
+                if st.button("Refresh registration master",use_container_width=False):
+                    st.rerun()
                 review=df.copy()
                 review=normalize(review)
                 review.insert(0,"delete",False)
