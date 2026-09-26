@@ -298,4 +298,4 @@ with st.expander("Organizer console"):
         else:
             st.error("Invalid organizer credentials.")
 
-st.markdown("<hr><center><b>ConvergeX — Intelligent Conference Experience Platform</b><br>Platform design & development: <a href="https://papers.ssrn.com/sol3/cf_dev/AbsByAuth.cfm?per_id=10902268" target="_blank" rel="noopener noreferrer">Dr. Mohammad Amir Khusru Akhtar</a></center>",unsafe_allow_html=True)
+st.markdown("""<hr><center><b>ConvergeX — Intelligent Conference Experience Platform</b><br>Platform design & development: <a href="https://papers.ssrn.com/sol3/cf_dev/AbsByAuth.cfm?per_id=10902268" target="_blank" rel="noopener noreferrer">Dr. Mohammad Amir Khusru Akhtar</a></center>""",unsafe_allow_html=True)
