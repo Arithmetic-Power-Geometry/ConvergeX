@@ -393,7 +393,7 @@ with st.expander("Organizer console"):
                 review=load_data().copy()
                 review=normalize(review)
                 review=review[~review["status"].str.lower().eq("approved")].copy()
-                review.insert(0,"delete",False)
+                review["delete"]=False
                 if review.empty:
                     st.info("No registrations have been received yet.")
                 else:
@@ -404,7 +404,7 @@ with st.expander("Organizer console"):
                         hide_index=True,
                         key="registration_review_sheet",
                         column_config={
-                            "delete":st.column_config.CheckboxColumn("Delete",help="Select only if this registration should be permanently removed."),
+                            "delete":st.column_config.CheckboxColumn("Delete permanently",help="Last column. Select only if this registration should be permanently removed."),
                             "registration_id":st.column_config.TextColumn("Registration ID",disabled=True),
                             "timestamp":st.column_config.TextColumn("Received",disabled=True),
                             "name":st.column_config.TextColumn("Name",required=True),
@@ -480,7 +480,7 @@ with st.expander("Organizer console"):
                 if approved_review.empty:
                     st.info("No approved registrations yet.")
                 else:
-                    approved_review.insert(0,"delete",False)
+                    approved_review["delete"]=False
                     approved_edit=st.data_editor(
                         approved_review,
                         num_rows="fixed",
@@ -488,7 +488,7 @@ with st.expander("Organizer console"):
                         hide_index=True,
                         key="approved_registration_sheet",
                         column_config={
-                            "delete":st.column_config.CheckboxColumn("Delete"),
+                            "delete":st.column_config.CheckboxColumn("Delete permanently",help="Last column. Select only if this approved registration should be permanently removed."),
                             "registration_id":st.column_config.TextColumn("Registration ID",disabled=True),
                             "timestamp":st.column_config.TextColumn("Received",disabled=True),
                             "name":st.column_config.TextColumn("Name",required=True),
