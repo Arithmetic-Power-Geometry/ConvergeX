@@ -136,6 +136,8 @@ html{scroll-behavior:smooth}.stApp{background:radial-gradient(circle at 15% 5%,r
 </style>"""
 st.markdown(CSS,unsafe_allow_html=True)
 df=load_data(); programme=load_programme(); pub=approved(df); days=max((EVENT_DATE-datetime.now()).days,0)
+registration_count=int(df.registration_id[df.registration_id.str.strip()!=""].nunique()) if len(df) else 0
+if registration_count==0 and len(df): registration_count=int(df.email[df.email.str.strip()!=""].str.lower().nunique())
 
 def heading(a,b="",anchor=""):
     marker=f'<div id="{anchor}" style="scroll-margin-top:85px"></div>' if anchor else ""
@@ -143,7 +145,7 @@ def heading(a,b="",anchor=""):
 
 st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div class="navtext"><a href="#home">Home</a><a href="#experience">Experience</a><a href="#people">People</a><a href="#twin">Digital Twin</a><a href="#programme">Programme</a><a href="#venue">Venue</a><a href="#register">Register</a><a href="#status">Status</a><a href="#admin">Organizer</a></div><div class="badge">2026</div></div>',unsafe_allow_html=True)
 st.markdown('<div id="home" style="scroll-margin-top:85px"></div>',unsafe_allow_html=True)
-st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{len(df)}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role=="Keynote Speaker"])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
+st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{registration_count}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role=="Keynote Speaker"])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
 
 heading("Living Constellation","Six connected pathways through one conference experience.","experience")
 st.markdown("""<div class="const"><div class="core">CONCLAVE<br>2026</div><div class="orb o1">AI</div><div class="orb o2">DeepTech</div><div class="orb o3">Research</div><div class="orb o4">Enterprise</div><div class="orb o5">IP Strategy</div><div class="orb o6">Leadership</div></div>""",unsafe_allow_html=True)
@@ -277,6 +279,7 @@ with st.expander("Organizer console"):
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
                 review=df.copy()
+                review.insert(0,"delete",False)
                 if review.empty:
                     st.info("No registrations have been received yet.")
                 else:
@@ -287,6 +290,7 @@ with st.expander("Organizer console"):
                         hide_index=True,
                         key="registration_review_sheet",
                         column_config={
+                            "delete":st.column_config.CheckboxColumn("Delete",help="Select only if this registration should be permanently removed."),
                             "registration_id":st.column_config.TextColumn("Registration ID",disabled=True),
                             "timestamp":st.column_config.TextColumn("Received",disabled=True),
                             "name":st.column_config.TextColumn("Name",required=True),
@@ -308,17 +312,21 @@ with st.expander("Organizer console"):
                     pending_n=int((review.status.str.lower()=="pending").sum())
                     approved_n=int((review.status.str.lower()=="approved").sum())
                     hidden_n=int(review.status.str.lower().isin(["hidden","rejected"]).sum())
+                    delete_n=int(review["delete"].fillna(False).astype(bool).sum())
                     m1,m2,m3,m4=st.columns(4)
                     m1.metric("Registrations",len(review));m2.metric("Awaiting review",pending_n);m3.metric("Published",approved_n);m4.metric("Private",hidden_n)
                     c1,c2=st.columns([2,1])
                     with c1:
                         if st.button("Save all changes",type="primary",use_container_width=True):
                             try:
-                                save_data(normalize(review));st.success("Changes saved. Approved rows are public; Pending, Hidden and Rejected rows are private.");st.rerun()
+                                kept=review[~review["delete"].fillna(False).astype(bool)].drop(columns=["delete"],errors="ignore")
+                                save_data(normalize(kept))
+                                st.success("Changes saved. Approved rows are public; Pending, Hidden and Rejected rows are private. Selected Delete rows were permanently removed.")
+                                st.rerun()
                             except Exception as e:st.error("Could not save the registration sheet. "+str(e))
                     with c2:
                         st.download_button("Download Excel backup",excel_blob(review),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
-                    st.caption("To approve: choose Approved in the row's Publication status. To remove someone from the public site later, change the same field to Hidden. You can edit any correction in that row before saving.")
+                    st.caption("Approve publishes a row; Hidden removes it from the public site without deleting it. For a permanent removal, tick Delete in that row and then Save all changes.")
             with progtab:
                 st.caption("Add the programme hour by hour. Use status Published to make a row visible publicly; Draft remains private.")
                 ped=programme.copy()
