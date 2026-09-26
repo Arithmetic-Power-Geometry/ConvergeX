@@ -1,3 +1,4 @@
+import base64
 import streamlit as st
 import pandas as pd
 import csv, io, json, uuid, base64, urllib.request, urllib.error, hashlib, hmac
@@ -83,23 +84,50 @@ def save_taxonomy(roles,themes):
 
 ROLES,THEMES=load_taxonomy()
 
-def load_data(force_remote=False):
-    if "registrations_master" in st.session_state:
-        return normalize(st.session_state["registrations_master"].copy())
-    p=local_path("registrations.csv")
+def github_read_registrations():
+    url="https://api.github.com/repos/"+REPO+"/contents/"+DATA_PATH+"?ref=main"
+    token=secret("GITHUB_TOKEN").strip()
+    headers={"Accept":"application/vnd.github+json","User-Agent":"ConvergeX-Streamlit","X-GitHub-Api-Version":"2022-11-28"}
+    if token: headers["Authorization"]="Bearer "+token
+    req=urllib.request.Request(url,headers=headers)
+    with urllib.request.urlopen(req,timeout=20) as r:
+        obj=json.loads(r.read().decode("utf-8"))
+    raw=base64.b64decode(obj.get("content","").replace("\n",""))
+    df=normalize(pd.read_csv(io.BytesIO(raw),dtype=str).fillna("")) if raw.strip() else normalize(pd.DataFrame())
+    return df,obj.get("sha","")
+
+def github_write_registrations(df,message="Update ConvergeX registrations"):
+    token=secret("GITHUB_TOKEN").strip()
+    if not token:
+        raise RuntimeError("GitHub storage is not configured.")
+    clean=normalize(df)
+    current,sha=github_read_registrations()
+    payload={
+        "message":message,
+        "content":base64.b64encode(clean.to_csv(index=False).encode("utf-8")).decode("ascii"),
+        "branch":"main"
+    }
+    if sha: payload["sha"]=sha
+    url="https://api.github.com/repos/"+REPO+"/contents/"+DATA_PATH
+    headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json","Content-Type":"application/json","User-Agent":"ConvergeX-Streamlit","X-GitHub-Api-Version":"2022-11-28"}
+    req=urllib.request.Request(url,data=json.dumps(payload).encode("utf-8"),method="PUT",headers=headers)
     try:
-        if __import__("os").path.exists(p):
-            df=normalize(pd.read_csv(p,dtype=str).fillna(""))
-        else:
-            url="https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH+"?v="+uuid.uuid4().hex
-            with urllib.request.urlopen(url,timeout=12) as r:
-                df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna(""))
+        with urllib.request.urlopen(req,timeout=25) as r:
+            json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail=e.read().decode("utf-8",errors="replace")
+        raise RuntimeError("GitHub write failed ("+str(e.code)+"). "+detail[:220])
+    return True
+
+def load_data(force_remote=False):
+    try:
+        df,_=github_read_registrations()
         st.session_state["registrations_master"]=df.copy()
         return df
     except Exception:
-        df=normalize(pd.DataFrame())
-        st.session_state["registrations_master"]=df.copy()
-        return df
+        if "registrations_master" in st.session_state:
+            return normalize(st.session_state["registrations_master"].copy())
+        return normalize(pd.DataFrame())
 
 def csv_blob(df): return normalize(df).to_csv(index=False).encode("utf-8-sig")
 
@@ -112,8 +140,8 @@ def excel_blob(df):
 def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
     try:
         clean=normalize(df)
+        github_write_registrations(clean,message)
         st.session_state["registrations_master"]=clean.copy()
-        clean.to_csv(local_path("registrations.csv"),index=False)
         st.session_state["last_remote_saved"]=True
         st.session_state["last_remote_error"]=""
         return True
@@ -123,14 +151,23 @@ def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
         return False
 
 def register(row):
-    df=load_data()
+    df=load_data(force_remote=True)
     email=str(row["email"]).strip().lower()
     if len(df) and any(df["email"].str.strip().str.lower()==email):
         raise ValueError("This email address is already registered.")
     merged=merge_records(df,pd.DataFrame([row]))
-    if not save_data(merged):
-        raise RuntimeError("The registration could not be saved.")
+    if not save_data(merged,"New ConvergeX registration "+str(row["registration_id"])):
+        raise RuntimeError("Registration could not be stored permanently. Please try again.")
     return True
+
+def github_storage_health():
+    if not secret("GITHUB_TOKEN").strip():
+        return False,"GitHub token is not configured."
+    try:
+        github_read_registrations()
+        return True,""
+    except Exception as e:
+        return False,str(e)
 
 def load_programme():
     p=local_path("programme.csv")
@@ -294,6 +331,11 @@ with st.form("registration",clear_on_submit=True):
     consent=st.checkbox("I confirm the information is correct and consent to its use for conference administration.")
     submitted=st.form_submit_button("Complete Registration",use_container_width=True)
 if submitted:
+    storage_ok,storage_error=github_storage_health()
+    if not storage_ok:
+        st.error("Registration is temporarily unavailable because permanent storage is not connected. Please contact the organizer.")
+        submitted=False
+if submitted:
     missing=[]
     if not name.strip(): missing.append("Full name")
     if not institution.strip(): missing.append("Institution / organization")
@@ -330,11 +372,15 @@ with st.expander("Organizer console"):
             st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
-            st.success("Registration storage: Streamlit app storage active.")
+            storage_ok,storage_error=github_storage_health()
+            if storage_ok:
+                st.success("Registration storage: GitHub master connected.")
+            else:
+                st.error("Registration storage is not connected. Check GITHUB_TOKEN and repository permission.")
             regtab,approvedtab,progtab,optiontab=st.tabs(["Pending / Review","Approved","Programme editor","Registration options"])
             with regtab:
                 st.caption("Review new registrations here. Set Publication status to Approved and save; approved records move to the Approved tab.")
-                st.caption("Use Download Excel backup regularly. Streamlit Community Cloud local files can reset when the app is redeployed or restarted.")
+                st.caption("GitHub is the permanent registration master. Excel backup remains available for offline records.")
                 review=load_data().copy()
                 review=normalize(review)
                 review=review[~review["status"].str.lower().eq("approved")].copy()
