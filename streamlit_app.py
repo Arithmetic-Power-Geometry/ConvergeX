@@ -71,9 +71,25 @@ ROLES,THEMES=load_taxonomy()
 def github_token():
     return secret("GITHUB_TOKEN")
 
+def github_access():
+    token=github_token()
+    if not token: return {"read":False,"write":False,"message":"GITHUB_TOKEN is not configured."}
+    url="https://api.github.com/repos/"+REPO
+    req=urllib.request.Request(url,headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28"})
+    try:
+        with urllib.request.urlopen(req,timeout=15) as r: obj=json.loads(r.read().decode("utf-8"))
+        perms=obj.get("permissions",{}) or {}
+        return {"read":True,"write":bool(perms.get("push") or perms.get("admin") or perms.get("maintain")),"message":""}
+    except urllib.error.HTTPError as e:
+        try: detail=json.loads(e.read().decode("utf-8")).get("message",str(e))
+        except Exception: detail=str(e)
+        return {"read":False,"write":False,"message":detail}
+    except Exception as e:
+        return {"read":False,"write":False,"message":str(e)}
+
 def github_read_csv(path=DATA_PATH):
     url="https://api.github.com/repos/"+REPO+"/contents/"+path+"?ref=main"
-    headers={"Accept":"application/vnd.github+json","User-Agent":"ConvergeX"}
+    headers={"Accept":"application/vnd.github+json","User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28"}
     if github_token(): headers["Authorization"]="Bearer "+github_token()
     req=urllib.request.Request(url,headers=headers)
     with urllib.request.urlopen(req,timeout=15) as r:
@@ -84,36 +100,29 @@ def github_read_csv(path=DATA_PATH):
 def github_write_csv(df,path=DATA_PATH,message="Update ConvergeX registrations"):
     token=github_token()
     if not token: return False
+    access=github_access()
+    if not access["write"]: raise PermissionError("GitHub token does not have Contents write access to "+REPO+".")
     current,sha=github_read_csv(path)
     content=normalize(df).to_csv(index=False).encode("utf-8")
     payload={"message":message,"content":base64.b64encode(content).decode("ascii"),"branch":"main"}
     if sha: payload["sha"]=sha
     url="https://api.github.com/repos/"+REPO+"/contents/"+path
-    req=urllib.request.Request(url,data=json.dumps(payload).encode("utf-8"),method="PUT",headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","Content-Type":"application/json"})
+    req=urllib.request.Request(url,data=json.dumps(payload).encode("utf-8"),method="PUT",headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json"})
     with urllib.request.urlopen(req,timeout=20): pass
     return True
 
-def load_data():
+def load_data(force_remote=False):
     p=local_path("registrations.csv")
-    local_df=normalize(pd.DataFrame())
-    try:
-        if __import__("os").path.exists(p): local_df=normalize(pd.read_csv(p,dtype=str))
-    except Exception: pass
-    remote_df=normalize(pd.DataFrame())
     try:
         remote_df,_=github_read_csv()
+        remote_df=normalize(remote_df)
+        remote_df.to_csv(p,index=False)
+        return remote_df
     except Exception:
         try:
-            req=urllib.request.Request(RAW+"?v="+uuid.uuid4().hex,headers={"Cache-Control":"no-cache"})
-            with urllib.request.urlopen(req,timeout=15) as r: remote_df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str))
+            if __import__("os").path.exists(p): return normalize(pd.read_csv(p,dtype=str))
         except Exception: pass
-    if len(local_df) and len(remote_df):
-        df=normalize(pd.concat([remote_df,local_df],ignore_index=True))
-    elif len(local_df): df=local_df
-    else: df=remote_df
-    try: df.to_csv(p,index=False)
-    except Exception: pass
-    return df
+        return normalize(pd.DataFrame())
 
 def csv_blob(df): return normalize(df).to_csv(index=False).encode("utf-8-sig")
 
@@ -143,7 +152,10 @@ def register(row):
     if not any(merged.registration_id==row["registration_id"]):
         raise ValueError("Registration could not be added to the master record.")
     remote_saved=save_data(merged,"Add conference registration "+row["registration_id"])
-    return remote_saved
+    if not remote_saved:
+        err=st.session_state.get("last_remote_error","")
+        raise RuntimeError("The registration could not be committed to the conference master."+(" "+err if err else ""))
+    return True
 
 def load_programme():
     p=local_path("programme.csv")
@@ -264,7 +276,7 @@ else:
             if len(related): st.caption("Theme connections: "+", ".join(related["name"].tolist()))
             else: st.caption("No other approved participant currently shares this theme.")
     with twin_tabs[1]:
-        intelligence=pd.DataFrame({"Theme":THEMES,"Approved people":counts}).sort_values("Approved people",ascending=False)
+        intelligence=pd.DataFrame({"Theme":THEMES,"Approved people":[theme_counts.get(t,0) for t in THEMES]}).sort_values("Approved people",ascending=False)
         st.dataframe(intelligence,use_container_width=True,hide_index=True)
         gaps=intelligence[intelligence["Approved people"]==0]["Theme"].tolist()
         if gaps: st.info("Currently unrepresented pathways: "+", ".join(gaps))
@@ -295,7 +307,7 @@ if receipt:
     if receipt["remote"]:
         st.info("Registration saved to the conference master. The organizer can now review it.")
     else:
-        st.warning("Registration is saved in this app session, but repository persistence did not complete. Please inform the organizer before closing the app.")
+        st.warning("Registration was not committed to the conference master.")
 
 heading("Register","Submit once. Your role determines the directory in which you appear after approval.","register")
 with st.form("registration",clear_on_submit=True):
@@ -306,6 +318,11 @@ with st.form("registration",clear_on_submit=True):
         country=st.text_input("Country",value="India"); role=st.selectbox("Participation role *",ROLES); theme=st.selectbox("Primary focus",THEMES); talk=st.text_input("Proposed talk title (speaker roles)"); profile=st.text_area("Short professional profile")
     consent=st.checkbox("I confirm the information is correct and consent to its use for conference administration.")
     submitted=st.form_submit_button("Complete Registration",use_container_width=True)
+if submitted:
+    access=github_access()
+    if not access["write"]:
+        st.error("Registration is temporarily unavailable because secure persistent storage is not writable. Please contact the organizer.")
+        submitted=False
 if submitted:
     missing=[]
     if not name.strip(): missing.append("Full name")
@@ -322,7 +339,7 @@ if submitted:
             st.session_state["registration_receipt"]={"id":rid,"remote":remote_saved}
             st.rerun()
         except ValueError as e:st.warning(str(e))
-        except Exception as e:st.error(str(e))
+        except Exception as e:st.error("Registration was not saved. "+str(e))
 
 heading("Registration Status","Check administrative progress without exposing contact information.","status")
 q=st.text_input("Registration ID",placeholder="STDI-2026-XXXXXX")
@@ -343,19 +360,29 @@ with st.expander("Organizer console"):
             st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
-            if github_token():
-                try:
-                    _remote_check,_remote_sha=github_read_csv()
-                    st.caption("Data store: repository connected with local cache.")
-                except Exception:
-                    st.warning("Repository token is configured, but the registration master cannot currently be read. Registrations will remain in local cache until repository access is fixed.")
+            access=github_access()
+            if access["write"]:
+                st.success("Registration storage: connected with read/write access.")
+            elif access["read"]:
+                st.error("Registration storage is read-only. GITHUB_TOKEN must have Contents: Read and write permission before registrations can be accepted permanently.")
             else:
-                st.caption("Data store: local app storage. Add GITHUB_TOKEN in Streamlit Secrets for repository persistence across redeployments.")
+                st.error("Registration storage is not connected. "+access["message"])
             regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
                 if st.button("Refresh registration master",use_container_width=False):
+                    try:
+                        fresh,_=github_read_csv()
+                        fresh=normalize(fresh)
+                        fresh.to_csv(local_path("registrations.csv"),index=False)
+                        st.session_state["master_refresh_message"]="Registration master refreshed from repository."
+                    except Exception as e:
+                        st.session_state["master_refresh_error"]="Refresh failed: "+str(e)
                     st.rerun()
+                if st.session_state.pop("master_refresh_message",None):
+                    st.success("Registration master refreshed from repository.")
+                refresh_error=st.session_state.pop("master_refresh_error",None)
+                if refresh_error: st.error(refresh_error)
                 review=df.copy()
                 review=normalize(review)
                 review.insert(0,"delete",False)
