@@ -1,10 +1,57 @@
 import streamlit as st
 from datetime import datetime
-import json, uuid
+import json, uuid, csv, io, base64, urllib.request, urllib.error
 
 st.set_page_config(page_title="ConvergeX", page_icon="✦", layout="wide", initial_sidebar_state="collapsed")
 
 EVENT_DATE = datetime(2026,10,25,9,0,0)
+REPO = "Arithmetic-Power-Geometry/ConvergeX"
+DATA_PATH = "data/registrations.csv"
+FIELDS = ["registration_id","timestamp","name","designation","institution","email","mobile","country","category","theme","bio","status"]
+
+def _token():
+    try: return st.secrets["GITHUB_TOKEN"]
+    except Exception: return ""
+
+def github_request(method, path, payload=None):
+    token=_token()
+    if not token: raise RuntimeError("Permanent registration is not configured yet. Add GITHUB_TOKEN in Streamlit app Secrets.")
+    url="https://api.github.com/repos/"+REPO+"/"+path
+    data=json.dumps(payload).encode() if payload is not None else None
+    req=urllib.request.Request(url,data=data,method=method,headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","User-Agent":"ConvergeX"})
+    with urllib.request.urlopen(req,timeout=20) as r: return json.loads(r.read().decode())
+
+def read_rows():
+    try:
+        raw=urllib.request.urlopen("https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH+"?v="+str(uuid.uuid4()),timeout=10).read().decode("utf-8-sig")
+        return list(csv.DictReader(io.StringIO(raw)))
+    except Exception: return []
+
+def write_rows(rows, message):
+    token=_token()
+    if not token: raise RuntimeError("Permanent registration is not configured yet. Add GITHUB_TOKEN in Streamlit app Secrets.")
+    try:
+        meta=github_request("GET","contents/"+DATA_PATH+"?ref=main")
+        sha=meta.get("sha")
+    except Exception:
+        sha=None
+    out=io.StringIO(); w=csv.DictWriter(out,fieldnames=FIELDS); w.writeheader()
+    for row in rows: w.writerow({k:row.get(k,"") for k in FIELDS})
+    payload={"message":message,"content":base64.b64encode(out.getvalue().encode()).decode(),"branch":"main"}
+    if sha: payload["sha"]=sha
+    return github_request("PUT","contents/"+DATA_PATH,payload)
+
+def permanent_register(row):
+    for attempt in range(3):
+        rows=read_rows()
+        if any(x.get("email","").lower()==row["email"].lower() for x in rows):
+            raise ValueError("This email is already registered.")
+        try:
+            write_rows(rows+[row],"Register "+row["registration_id"])
+            return
+        except urllib.error.HTTPError as e:
+            if e.code==409 and attempt<2: continue
+            raise
 
 CSS = r"""
 <style>
@@ -139,7 +186,7 @@ st.markdown('''<div class="grid3">
 <div class="card"><span class="badge">EXPERIENCE</span><h3>Conference + Destination</h3><p>Venue, travel guidance, accommodation and local experience modules can be published from the platform.</p></div>
 </div>''',unsafe_allow_html=True)
 
-section_title("Register","Multi-step registration prototype. Production deployment should connect to a private database, not public Git history.","register")
+section_title("Register","Complete your registration. A successful submission is permanently recorded in the conference master dataset.","register")
 with st.form("registration_form", clear_on_submit=False):
     c1,c2=st.columns(2)
     with c1:
@@ -154,14 +201,19 @@ with st.form("registration_form", clear_on_submit=False):
         theme=st.selectbox("Primary interest",["Artificial Intelligence & Generative AI","DeepTech & Emerging Technologies","Strategic Technology Management","Research & Entrepreneurship","Intellectual Property & Patent Strategy","Leadership & Sustainability"])
     bio=st.text_area("Professional profile / note", height=100)
     consent=st.checkbox("I confirm that the information provided is correct and may be used for conference administration.")
-    submitted=st.form_submit_button("Create Registration ID", use_container_width=True)
+    submitted=st.form_submit_button("Complete Registration", use_container_width=True)
     if submitted:
-        if not name or not institution or not email or not consent:
-            st.error("Please complete the required fields and consent checkbox.")
+        if not name.strip() or not institution.strip() or not email.strip() or "@" not in email or not consent:
+            st.error("Please complete the required fields, enter a valid email, and confirm consent.")
         else:
             reg=f"STDI-2026-{uuid.uuid4().hex[:6].upper()}"
-            st.success(f"Registration prototype created: {reg}")
-            st.info("Demo mode: no personal data has been written to the public GitHub repository.")
+            row={"registration_id":reg,"timestamp":datetime.now().isoformat(timespec="seconds"),"name":name.strip(),"designation":designation.strip(),"institution":institution.strip(),"email":email.strip(),"mobile":phone.strip(),"country":country.strip(),"category":category,"theme":theme,"bio":bio.strip(),"status":"Registered"}
+            try:
+                permanent_register(row)
+                st.success(f"Registration complete. Your permanent Registration ID is {reg}.")
+                st.caption("Your registration has been saved to the conference master dataset.")
+            except ValueError as e: st.warning(str(e))
+            except Exception as e: st.error(str(e))
 
 section_title("Platform Architecture","ConvergeX is reusable beyond this conference.")
 st.markdown('''<div class="grid3">
@@ -173,4 +225,4 @@ st.markdown('''<div class="grid3">
 st.markdown('''<div class="footer"><b>ConvergeX — Intelligent Conference Experience Platform</b><br>
 Strategic Technomanagerial DeepTech Innovation Conclave 2026 · Wayanad, Kerala, India<br><br>
 Conference leadership: Ramesh Chandra Panda · Platform design & development: Dr. Mohammad Amir Khusru Akhtar<br>
-<small>Public repository contains software and public event content only. Registration data should use a private production datastore.</small></div>''',unsafe_allow_html=True)
+<small>Registrations are permanently maintained in the conference master dataset. Administrative credentials are kept outside the public source code.</small></div>''',unsafe_allow_html=True)
