@@ -84,27 +84,20 @@ def save_taxonomy(roles,themes):
 ROLES,THEMES=load_taxonomy()
 
 def load_data(force_remote=False):
-    p=local_path("registrations.csv")
-    if "registrations_master" in st.session_state and not force_remote:
+    if "registrations_master" in st.session_state:
         return normalize(st.session_state["registrations_master"].copy())
+    p=local_path("registrations.csv")
     try:
         if __import__("os").path.exists(p):
             df=normalize(pd.read_csv(p,dtype=str).fillna(""))
-            st.session_state["registrations_master"]=df.copy()
-            return df
-    except Exception:
-        pass
-    # Seed once from the repository CSV if available; all later edits stay in Streamlit storage.
-    try:
-        url="https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH+"?v="+uuid.uuid4().hex
-        with urllib.request.urlopen(url,timeout=12) as r:
-            df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna(""))
-        df.to_csv(p,index=False)
+        else:
+            url="https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH+"?v="+uuid.uuid4().hex
+            with urllib.request.urlopen(url,timeout=12) as r:
+                df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna(""))
         st.session_state["registrations_master"]=df.copy()
         return df
     except Exception:
         df=normalize(pd.DataFrame())
-        df.to_csv(p,index=False)
         st.session_state["registrations_master"]=df.copy()
         return df
 
@@ -119,8 +112,8 @@ def excel_blob(df):
 def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
     try:
         clean=normalize(df)
-        clean.to_csv(local_path("registrations.csv"),index=False)
         st.session_state["registrations_master"]=clean.copy()
+        clean.to_csv(local_path("registrations.csv"),index=False)
         st.session_state["last_remote_saved"]=True
         st.session_state["last_remote_error"]=""
         return True
@@ -338,26 +331,13 @@ with st.expander("Organizer console"):
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
             st.success("Registration storage: Streamlit app storage active.")
-            regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
+            regtab,approvedtab,progtab,optiontab=st.tabs(["Pending / Review","Approved","Programme editor","Registration options"])
             with regtab:
-                st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
+                st.caption("Review new registrations here. Set Publication status to Approved and save; approved records move to the Approved tab.")
                 st.caption("Use Download Excel backup regularly. Streamlit Community Cloud local files can reset when the app is redeployed or restarted.")
-                if st.button("Refresh registration master",use_container_width=False):
-                    try:
-                        st.session_state.pop("registrations_master",None)
-                        fresh=load_data(force_remote=True)
-                        fresh.to_csv(local_path("registrations.csv"),index=False)
-                        st.session_state["registrations_master"]=fresh.copy()
-                        st.session_state["master_refresh_message"]="Registration master refreshed."
-                    except Exception as e:
-                        st.session_state["master_refresh_error"]="Refresh failed: "+str(e)
-                    st.rerun()
-                if st.session_state.pop("master_refresh_message",None):
-                    st.success("Registration master refreshed.")
-                refresh_error=st.session_state.pop("master_refresh_error",None)
-                if refresh_error: st.error(refresh_error)
-                review=df.copy()
+                review=load_data().copy()
                 review=normalize(review)
+                review=review[~review["status"].str.lower().eq("approved")].copy()
                 review.insert(0,"delete",False)
                 if review.empty:
                     st.info("No registrations have been received yet.")
@@ -406,7 +386,9 @@ with st.expander("Organizer console"):
                                 if len(invalid):
                                     st.error("A registration cannot be saved without Registration ID, Name and Email.")
                                 else:
-                                    remote_saved=save_data(normalize(kept),"Update registration master",deleted_ids=deleted_ids)
+                                    existing_approved=approved(load_data())
+                                    combined=merge_records(existing_approved,normalize(kept))
+                                    remote_saved=save_data(combined,"Update registration master",deleted_ids=deleted_ids)
                                     if not remote_saved:
                                         raise RuntimeError(st.session_state.get("last_remote_error","Repository write did not complete."))
                                     st.success("Changes saved to the conference master. Approved registrations are now published.")
@@ -414,34 +396,6 @@ with st.expander("Organizer console"):
                             except Exception as e:st.error("Could not save the registration sheet. "+str(e))
                     with c2:
                         st.download_button("Download Excel backup",excel_blob(review),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
-                    approved_admin=approved(normalize(review.drop(columns=["delete"],errors="ignore")))
-                    st.markdown("#### Approved registrations")
-                    if approved_admin.empty:
-                        st.caption("No approved registrations yet.")
-                    else:
-                        st.dataframe(
-                            approved_admin,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "registration_id":"Registration ID",
-                                "timestamp":"Received",
-                                "name":"Name",
-                                "designation":"Designation",
-                                "institution":"Institution",
-                                "email":"Email",
-                                "mobile":"Mobile",
-                                "country":"Country",
-                                "role":"Role",
-                                "theme":"Theme",
-                                "talk_title":"Talk title",
-                                "profile":"Profile",
-                                "status":"Status",
-                                "payment":"Payment",
-                                "accommodation":"Accommodation",
-                                "certificate":"Certificate"
-                            }
-                        )
                     st.markdown("#### Backup & restore")
                     upload=st.file_uploader("Upload registration backup",type=["xlsx","csv"],key="registration_backup_upload",help="Uploaded rows are merged by Registration ID. Existing populated data is preserved unless the uploaded file provides a replacement value.")
                     if upload is not None:
@@ -463,6 +417,54 @@ with st.expander("Organizer console"):
                             except Exception as e:
                                 st.error("Backup was not imported. "+str(e))
                     st.caption("Approve publishes a row; Hidden removes it from the public site without deleting it. For a permanent removal, tick Delete in that row and then Save all changes.")
+            with approvedtab:
+                st.caption("Approved registrations are published across People, Digital Twin and conference counts. Edit them here and save.")
+                approved_review=approved(load_data()).copy()
+                if approved_review.empty:
+                    st.info("No approved registrations yet.")
+                else:
+                    approved_review.insert(0,"delete",False)
+                    approved_edit=st.data_editor(
+                        approved_review,
+                        num_rows="fixed",
+                        use_container_width=True,
+                        hide_index=True,
+                        key="approved_registration_sheet",
+                        column_config={
+                            "delete":st.column_config.CheckboxColumn("Delete"),
+                            "registration_id":st.column_config.TextColumn("Registration ID",disabled=True),
+                            "timestamp":st.column_config.TextColumn("Received",disabled=True),
+                            "name":st.column_config.TextColumn("Name",required=True),
+                            "designation":st.column_config.TextColumn("Designation"),
+                            "institution":st.column_config.TextColumn("Institution",required=True),
+                            "email":st.column_config.TextColumn("Email",required=True),
+                            "mobile":st.column_config.TextColumn("Mobile"),
+                            "country":st.column_config.TextColumn("Country"),
+                            "role":st.column_config.SelectboxColumn("Role",options=ROLES,required=True),
+                            "theme":st.column_config.SelectboxColumn("Theme",options=THEMES),
+                            "talk_title":st.column_config.TextColumn("Talk title"),
+                            "profile":st.column_config.TextColumn("Profile"),
+                            "status":st.column_config.SelectboxColumn("Publication status",options=["Approved","Pending","Hidden","Rejected"],required=True),
+                            "payment":st.column_config.SelectboxColumn("Payment",options=["Pending","Paid","Waived","Not applicable"]),
+                            "accommodation":st.column_config.SelectboxColumn("Accommodation",options=["","Pending","Confirmed","Not required"]),
+                            "certificate":st.column_config.SelectboxColumn("Certificate",options=["","Pending","Ready","Issued"])
+                        }
+                    )
+                    if st.button("Save approved changes",type="primary",use_container_width=True):
+                        try:
+                            delete_ids=set(approved_edit.loc[approved_edit["delete"].fillna(False).astype(bool),"registration_id"].astype(str))
+                            changed=normalize(approved_edit[~approved_edit["delete"].fillna(False).astype(bool)].drop(columns=["delete"],errors="ignore"))
+                            master=load_data()
+                            master=master[~master["registration_id"].isin(set(approved_review["registration_id"].astype(str)))].copy()
+                            merged=merge_records(master,changed)
+                            if not save_data(merged,deleted_ids=list(delete_ids)):
+                                raise RuntimeError(st.session_state.get("last_remote_error","Save failed."))
+                            st.success("Approved registrations updated.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error("Could not save approved registrations. "+str(e))
+                st.caption("Approved records remain editable. Changing status away from Approved removes them from public views and returns them to review/private status.")
+
             with progtab:
                 st.caption("Add the programme hour by hour. Use status Published to make a row visible publicly; Draft remains private.")
                 ped=programme.copy()
