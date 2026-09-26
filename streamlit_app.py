@@ -1,228 +1,189 @@
 import streamlit as st
+import pandas as pd
+import csv, io, json, uuid, base64, urllib.request, urllib.error, hashlib, hmac
 from datetime import datetime
-import json, uuid, csv, io, base64, urllib.request, urllib.error
+from io import BytesIO
 
-st.set_page_config(page_title="ConvergeX", page_icon="✦", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="ConvergeX 2026",page_icon="✦",layout="wide",initial_sidebar_state="collapsed")
 
-EVENT_DATE = datetime(2026,10,25,9,0,0)
-REPO = "Arithmetic-Power-Geometry/ConvergeX"
-DATA_PATH = "data/registrations.csv"
-FIELDS = ["registration_id","timestamp","name","designation","institution","email","mobile","country","category","theme","bio","status"]
+REPO="Arithmetic-Power-Geometry/ConvergeX"
+DATA_PATH="data/registrations.csv"
+RAW="https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH
+EVENT_DATE=datetime(2026,10,25,9,0)
+ROLES=["Delegate","Keynote Speaker","Invited Speaker","Researcher","Industry Professional","Entrepreneur","Student","Organizing Committee","Other"]
+THEMES=["Strategic Technology & Innovation Management","Artificial Intelligence & Generative AI","DeepTech & Emerging Technologies","Research, Entrepreneurship & Start-ups","Intellectual Property & Patent Strategy","Future-Ready Leadership & Sustainability"]
+FIELDS=["registration_id","timestamp","name","designation","institution","email","mobile","country","role","theme","talk_title","profile","status","payment","accommodation","certificate"]
+PUBLIC=["registration_id","name","designation","institution","country","role","theme","talk_title"]
 
-def _token():
-    try: return st.secrets["GITHUB_TOKEN"]
-    except Exception: return ""
+def secret(name,default=""):
+    try:return str(st.secrets[name])
+    except Exception:return default
 
-def github_request(method, path, payload=None):
-    token=_token()
-    if not token: raise RuntimeError("Permanent registration is not configured yet. Add GITHUB_TOKEN in Streamlit app Secrets.")
-    url="https://api.github.com/repos/"+REPO+"/"+path
+def gh(method,path,payload=None):
+    token=secret("GITHUB_TOKEN")
+    if not token: raise RuntimeError("Permanent storage is not configured. Add GITHUB_TOKEN in Streamlit Secrets.")
     data=json.dumps(payload).encode() if payload is not None else None
-    req=urllib.request.Request(url,data=data,method=method,headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","User-Agent":"ConvergeX"})
-    with urllib.request.urlopen(req,timeout=20) as r: return json.loads(r.read().decode())
+    req=urllib.request.Request("https://api.github.com/repos/"+REPO+"/"+path,data=data,method=method,headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","User-Agent":"ConvergeX"})
+    with urllib.request.urlopen(req,timeout=25) as r:return json.loads(r.read().decode())
 
-def read_rows():
+def normalize(df):
+    if df is None: df=pd.DataFrame()
+    df=df.fillna("").astype(str)
+    for c in FIELDS:
+        if c not in df.columns:df[c]=""
+    return df[FIELDS]
+
+def load_data():
     try:
-        raw=urllib.request.urlopen("https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH+"?v="+str(uuid.uuid4()),timeout=10).read().decode("utf-8-sig")
-        return list(csv.DictReader(io.StringIO(raw)))
-    except Exception: return []
+        req=urllib.request.Request(RAW+"?v="+uuid.uuid4().hex,headers={"Cache-Control":"no-cache"})
+        with urllib.request.urlopen(req,timeout=15) as r:
+            return normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str))
+    except Exception:return normalize(pd.DataFrame())
 
-def write_rows(rows, message):
-    token=_token()
-    if not token: raise RuntimeError("Permanent registration is not configured yet. Add GITHUB_TOKEN in Streamlit app Secrets.")
-    try:
-        meta=github_request("GET","contents/"+DATA_PATH+"?ref=main")
-        sha=meta.get("sha")
-    except Exception:
-        sha=None
-    out=io.StringIO(); w=csv.DictWriter(out,fieldnames=FIELDS); w.writeheader()
-    for row in rows: w.writerow({k:row.get(k,"") for k in FIELDS})
-    payload={"message":message,"content":base64.b64encode(out.getvalue().encode()).decode(),"branch":"main"}
-    if sha: payload["sha"]=sha
-    return github_request("PUT","contents/"+DATA_PATH,payload)
+def csv_blob(df):
+    return normalize(df).to_csv(index=False).encode("utf-8-sig")
 
-def permanent_register(row):
+def excel_blob(df):
+    out=BytesIO()
+    with pd.ExcelWriter(out,engine="openpyxl") as w:
+        normalize(df).to_excel(w,index=False,sheet_name="Registrations")
+    return out.getvalue()
+
+def save_data(df,message):
+    df=normalize(df)
+    meta=gh("GET","contents/"+DATA_PATH+"?ref=main")
+    payload={"message":message,"content":base64.b64encode(csv_blob(df)).decode(),"branch":"main","sha":meta["sha"]}
+    return gh("PUT","contents/"+DATA_PATH,payload)
+
+def register(row):
     for attempt in range(3):
-        rows=read_rows()
-        if any(x.get("email","").lower()==row["email"].lower() for x in rows):
-            raise ValueError("This email is already registered.")
+        df=load_data()
+        if any(df.email.str.lower()==row["email"].lower()):raise ValueError("This email address is already registered.")
         try:
-            write_rows(rows+[row],"Register "+row["registration_id"])
+            save_data(pd.concat([df,pd.DataFrame([row])],ignore_index=True),"Registration "+row["registration_id"])
             return
         except urllib.error.HTTPError as e:
-            if e.code==409 and attempt<2: continue
+            if e.code in (409,422) and attempt<2:continue
             raise
 
-CSS = r"""
-<style>
-:root{
- --bg:#06111f; --panel:#0b1b2e; --glass:rgba(255,255,255,.07);
- --gold:#f1c75b; --cyan:#4fe4ff; --text:#f7fbff; --muted:#a7b7c8;
-}
-html,body,[class*="css"]{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-.stApp{
- background:
- radial-gradient(circle at 20% 15%, rgba(79,228,255,.13), transparent 25%),
- radial-gradient(circle at 82% 18%, rgba(241,199,91,.13), transparent 22%),
- linear-gradient(135deg,#040b14 0%,#071728 48%,#05111d 100%);
- color:var(--text);
-}
-.block-container{padding-top:1.1rem;max-width:1380px}
-#MainMenu,footer,header{visibility:hidden}
-.nav{position:sticky;top:0;z-index:99;display:flex;align-items:center;justify-content:space-between;
-background:rgba(4,11,20,.72);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.08);
-border-radius:18px;padding:12px 18px;margin-bottom:18px}
-.brand{font-weight:900;letter-spacing:.04em}.brand span{color:var(--cyan)}
-.navlinks{font-size:.9rem;color:#c8d7e5;word-spacing:16px}
-.hero{min-height:650px;border-radius:34px;padding:70px 64px;position:relative;overflow:hidden;
-border:1px solid rgba(255,255,255,.10);background:
-linear-gradient(110deg,rgba(3,11,20,.96) 0%,rgba(4,16,31,.88) 48%,rgba(4,20,33,.56) 100%),
-radial-gradient(circle at 80% 55%,rgba(79,228,255,.20),transparent 18%);}
-.hero:before,.hero:after{content:"";position:absolute;border:1px solid rgba(79,228,255,.18);border-radius:50%}
-.hero:before{width:540px;height:540px;right:-130px;top:40px;box-shadow:0 0 70px rgba(79,228,255,.08)}
-.hero:after{width:330px;height:330px;right:-25px;top:145px;border-color:rgba(241,199,91,.25)}
-.kicker{color:var(--gold);font-weight:800;letter-spacing:.18em;text-transform:uppercase;font-size:.82rem}
-.hero h1{font-size:clamp(3rem,6vw,6.4rem);line-height:.92;margin:.5rem 0 1rem;max-width:900px}
-.hero h1 .cyan{color:var(--cyan)}.hero h1 .gold{color:var(--gold)}
-.sub{font-size:1.15rem;color:#d3dfeb;max-width:760px;line-height:1.6}
-.pills{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
-.pill{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);padding:9px 13px;border-radius:999px;color:#dbe8f5}
-.cta{display:inline-block;margin-top:28px;margin-right:12px;padding:13px 20px;border-radius:13px;font-weight:800;text-decoration:none}
-.cta.primary{background:linear-gradient(90deg,var(--gold),#ffe7a6);color:#08111d}
-.cta.ghost{border:1px solid rgba(255,255,255,.18);color:#fff}
-.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:18px}
-.metric{background:var(--glass);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:18px;text-align:center}
-.metric b{font-size:1.7rem;color:var(--cyan)}.metric small{display:block;color:var(--muted);margin-top:3px}
-.section-title{font-size:2.1rem;font-weight:900;margin:2.2rem 0 .4rem}.section-sub{color:var(--muted);margin-bottom:1.2rem}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-.card{background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));border:1px solid rgba(255,255,255,.09);border-radius:22px;padding:22px;min-height:175px}
-.card h3{margin:.2rem 0 .6rem}.card p{color:#b9c9d8;line-height:1.55}.icon{font-size:1.6rem}
-.constellation{position:relative;height:520px;border-radius:28px;border:1px solid rgba(255,255,255,.08);overflow:hidden;
-background:radial-gradient(circle at center,rgba(79,228,255,.11),transparent 35%),rgba(255,255,255,.025)}
-.center-node,.node{position:absolute;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:800}
-.center-node{width:160px;height:160px;left:calc(50% - 80px);top:180px;background:radial-gradient(circle,#163b5a,#081523);
-border:1px solid var(--gold);box-shadow:0 0 45px rgba(241,199,91,.18)}
-.node{width:110px;height:110px;background:rgba(6,25,42,.92);border:1px solid rgba(79,228,255,.45);box-shadow:0 0 24px rgba(79,228,255,.08);font-size:.9rem}
-.n1{left:11%;top:65px}.n2{left:31%;top:25px}.n3{right:31%;top:25px}.n4{right:11%;top:65px}.n5{left:20%;bottom:40px}.n6{right:20%;bottom:40px}
-.line{position:absolute;height:1px;background:linear-gradient(90deg,transparent,rgba(79,228,255,.33),transparent);transform-origin:left center}
-.speaker{display:flex;gap:16px;align-items:center}.avatar{width:72px;height:72px;border-radius:18px;background:linear-gradient(135deg,#12324f,#0a1726);display:flex;align-items:center;justify-content:center;font-size:1.7rem;border:1px solid rgba(241,199,91,.35)}
-.timeline{border-left:2px solid rgba(79,228,255,.25);padding-left:22px}.slot{padding:13px 0 19px;position:relative}.slot:before{content:"";width:11px;height:11px;border-radius:50%;background:var(--gold);position:absolute;left:-28px;top:20px}.slot b{color:var(--cyan)}
-.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:rgba(241,199,91,.12);color:var(--gold);font-size:.75rem;font-weight:800}
-.footer{margin:2.4rem 0 .5rem;padding:24px;border-top:1px solid rgba(255,255,255,.08);color:#8ca0b4;text-align:center}
-@media(max-width:900px){.metric-grid,.grid3{grid-template-columns:1fr}.hero{padding:42px 24px;min-height:auto}.navlinks{display:none}.constellation{height:620px}.n1{left:4%;top:80px}.n2{left:55%;top:38px}.n3{left:5%;top:420px}.n4{right:4%;top:420px}.n5{left:4%;bottom:20px}.n6{right:4%;bottom:20px}}
-</style>
-"""
-st.markdown(CSS, unsafe_allow_html=True)
+def admin_ok(u,p):
+    au=secret("ADMIN_USERNAME","ramesh")
+    ap=secret("ADMIN_PASSWORD")
+    return bool(ap) and hmac.compare_digest(u,au) and hmac.compare_digest(p,ap)
 
-def nav():
-    st.markdown('<div class="nav"><div class="brand">Converge<span>X</span></div><div class="navlinks">HOME EXPERIENCE SPEAKERS PROGRAMME THEMES AWARDS VENUE REGISTER</div><div class="badge">2026</div></div>', unsafe_allow_html=True)
+def approved(df):
+    return df[df.status.str.lower().isin(["approved","confirmed","active"])].copy()
 
-def hero():
-    now=datetime.now()
-    d=max(EVENT_DATE-now, datetime.min-now)
-    days=max((EVENT_DATE-now).days,0)
-    st.markdown(f'''
-    <section class="hero">
-      <div class="kicker">ConvergeX · Intelligent Conference Experience Platform</div>
-      <h1>STRATEGIC<br><span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1>
-      <div class="sub">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div>
-      <div class="pills"><span class="pill">Artificial Intelligence</span><span class="pill">DeepTech</span><span class="pill">Research</span><span class="pill">Entrepreneurship</span><span class="pill">Intellectual Property</span><span class="pill">Leadership</span></div>
-      <a class="cta primary" href="#register">REGISTER NOW</a><a class="cta ghost" href="#experience">EXPLORE CONCLAVE</a>
-      <div class="metric-grid"><div class="metric"><b>{days}</b><small>Days to Conclave</small></div><div class="metric"><b>10</b><small>Featured Speakers</small></div><div class="metric"><b>6</b><small>Core Themes</small></div><div class="metric"><b>1</b><small>Immersive Experience</small></div></div>
-    </section>''', unsafe_allow_html=True)
+def safe(s):
+    import html
+    return html.escape(str(s or ""))
 
-def section_title(title, subtitle, anchor=None):
-    if anchor: st.markdown(f'<div id="{anchor}"></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="section-title">{title}</div><div class="section-sub">{subtitle}</div>', unsafe_allow_html=True)
+CSS="""<style>
+:root{--gold:#f3c75f;--cyan:#50e4ff;--text:#f7fbff;--muted:#9fb2c6;--glass:rgba(255,255,255,.06)}
+html{scroll-behavior:smooth}.stApp{background:radial-gradient(circle at 15% 5%,rgba(80,228,255,.12),transparent 23%),radial-gradient(circle at 86% 8%,rgba(243,199,95,.11),transparent 22%),linear-gradient(145deg,#030912,#07192b 55%,#04101c);color:var(--text)}
+.block-container{max-width:1400px;padding-top:1rem}#MainMenu,footer{visibility:hidden}.stApp header{background:transparent}
+.nav{position:sticky;top:.5rem;z-index:99;display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border:1px solid rgba(255,255,255,.09);border-radius:18px;background:rgba(3,10,19,.75);backdrop-filter:blur(18px)}
+.logo{font-weight:950;font-size:1.2rem}.logo span{color:var(--cyan)}.navtext{color:#aebfd0;font-size:.8rem;letter-spacing:.06em}
+.hero{position:relative;overflow:hidden;margin-top:16px;min-height:610px;padding:62px;border:1px solid rgba(255,255,255,.09);border-radius:34px;background:radial-gradient(circle at 80% 45%,rgba(80,228,255,.16),transparent 22%),linear-gradient(110deg,rgba(3,10,18,.97),rgba(5,20,35,.74))}
+.hero:after{content:"";position:absolute;width:520px;height:520px;border-radius:50%;right:-120px;top:50px;border:1px solid rgba(80,228,255,.23);box-shadow:0 0 80px rgba(80,228,255,.07);animation:pulse 5s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.06);opacity:.62}}@keyframes float{50%{transform:translateY(-9px)}}.k{color:var(--gold);font-size:.78rem;font-weight:900;letter-spacing:.18em}.hero h1{font-size:clamp(3rem,6vw,6.1rem);line-height:.92;margin:.7rem 0 1.1rem;max-width:1000px}.gold{color:var(--gold)}.cyan{color:var(--cyan)}.lead{font-size:1.1rem;line-height:1.65;color:#d4e0eb;max-width:780px}
+.metrics,.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0}.metric,.card{background:var(--glass);border:1px solid rgba(255,255,255,.085);border-radius:21px;padding:20px;backdrop-filter:blur(8px)}.metric{text-align:center}.metric b{font-size:1.7rem;color:var(--cyan)}.metric span{display:block;color:var(--muted);font-size:.77rem}.card{min-height:145px;transition:.25s}.card:hover{transform:translateY(-4px);border-color:rgba(80,228,255,.32)}.card p{color:#b5c6d6;line-height:1.5}.title{font-size:2rem;font-weight:950;margin:2.5rem 0 .25rem}.sub{color:var(--muted);margin-bottom:1.1rem}
+.const{height:475px;position:relative;border:1px solid rgba(255,255,255,.08);border-radius:30px;background:radial-gradient(circle at center,rgba(80,228,255,.13),transparent 35%);overflow:hidden}.core,.orb{position:absolute;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:900}.core{width:160px;height:160px;left:calc(50% - 80px);top:158px;border:1px solid var(--gold);background:#0a2033;box-shadow:0 0 50px rgba(243,199,95,.13)}.orb{width:108px;height:108px;border:1px solid rgba(80,228,255,.42);background:#081a2b;animation:float 4s ease-in-out infinite}.o1{left:8%;top:65px}.o2{left:29%;top:25px}.o3{right:29%;top:25px}.o4{right:8%;top:65px}.o5{left:20%;bottom:38px}.o6{right:20%;bottom:38px}
+.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:rgba(243,199,95,.12);color:var(--gold);font-size:.72rem;font-weight:900}.person{font-size:1.15rem;font-weight:900;margin:.5rem 0}.muted{color:var(--muted)}.timeline{border-left:2px solid rgba(80,228,255,.25);padding-left:24px}.slot{position:relative;padding:10px 0 18px}.slot:before{content:"";position:absolute;left:-30px;top:17px;width:10px;height:10px;border-radius:50%;background:var(--gold)}
+@media(max-width:900px){.metrics,.cards{grid-template-columns:1fr}.hero{padding:35px 22px;min-height:auto}.navtext{display:none}.const{height:620px}.o1{left:4%;top:45px}.o2{right:4%;left:auto;top:45px}.o3{left:4%;top:410px}.o4{right:4%;top:410px}.o5{left:4%;bottom:15px}.o6{right:4%;bottom:15px}}
+</style>"""
+st.markdown(CSS,unsafe_allow_html=True)
+df=load_data(); pub=approved(df); days=max((EVENT_DATE-datetime.now()).days,0)
 
-nav(); hero()
-section_title("The ConvergeX Experience","A conference interface designed as a living network of people, ideas, technologies and opportunity.","experience")
-st.markdown('''<div class="constellation">
-<div class="center-node">CONCLAVE<br>2026</div>
-<div class="node n1">AI</div><div class="node n2">DeepTech</div><div class="node n3">Research</div>
-<div class="node n4">Entrepreneurship</div><div class="node n5">IP Strategy</div><div class="node n6">Leadership</div>
-</div>''',unsafe_allow_html=True)
+def heading(a,b=""):
+    st.markdown(f'<div class="title">{a}</div>'+ (f'<div class="sub">{b}</div>' if b else ""),unsafe_allow_html=True)
 
-section_title("Why Attend","Built for meaningful exchange rather than passive attendance.")
-st.markdown('''<div class="grid3">
-<div class="card"><div class="icon">✦</div><h3>Frontier Ideas</h3><p>Explore AI, generative AI, emerging technologies, research translation and strategic technology management.</p></div>
-<div class="card"><div class="icon">⌘</div><h3>Innovation Networks</h3><p>Connect academicians, researchers, innovators, entrepreneurs, technocrats and industry professionals.</p></div>
-<div class="card"><div class="icon">◇</div><h3>IP & Commercialization</h3><p>Discuss patent strategy, technology commercialization, innovation ecosystems and industry collaboration.</p></div>
-</div>''',unsafe_allow_html=True)
+st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div class="navtext">EXPERIENCE · PEOPLE · PROGRAMME · VENUE · REGISTER · STATUS</div><div class="badge">2026</div></div>',unsafe_allow_html=True)
+st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{len(df)}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role=="Keynote Speaker"])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
 
-section_title("Featured Leadership","Conference leadership and speaker profiles can be expanded from data files.","speakers")
-st.markdown('''<div class="grid3">
-<div class="card"><div class="speaker"><div class="avatar">RP</div><div><span class="badge">Conclave Organiser</span><h3>Ramesh Chandra Panda</h3></div></div><p>Chairman & Chief Scientist, WEGROW; IPR Head of 12 Universities and 58 Engineering/Management/Law Colleges; Conclave Organiser; Editor of 7 Scopus-indexed journals.</p></div>
-<div class="card"><div class="speaker"><div class="avatar">🎙</div><div><span class="badge">Keynote</span><h3>Speaker Profile</h3></div></div><p>Add confirmed keynote speakers, profile photographs, affiliations, talk titles and abstracts from the data layer.</p></div>
-<div class="card"><div class="speaker"><div class="avatar">＋</div><div><span class="badge">Dynamic</span><h3>More Speakers</h3></div></div><p>The platform is reusable: update a JSON file and the speaker cards, programme links and theme graph can change automatically.</p></div>
-</div>''',unsafe_allow_html=True)
+heading("Living Constellation","Six connected pathways through one conference experience.")
+st.markdown("""<div class="const"><div class="core">CONCLAVE<br>2026</div><div class="orb o1">AI</div><div class="orb o2">DeepTech</div><div class="orb o3">Research</div><div class="orb o4">Enterprise</div><div class="orb o5">IP Strategy</div><div class="orb o6">Leadership</div></div>""",unsafe_allow_html=True)
 
-section_title("Programme","A visual event journey. Replace placeholders as sessions are finalized.","programme")
-st.markdown('''<div class="timeline">
-<div class="slot"><b>08:30</b><h3>Registration & Welcome</h3><p>Arrival, delegate check-in and networking.</p></div>
-<div class="slot"><b>09:30</b><h3>Opening Plenary</h3><p>Strategic technology, innovation and the future of DeepTech ecosystems.</p></div>
-<div class="slot"><b>11:00</b><h3>AI & Generative AI</h3><p>Research, applications, governance and commercialization.</p></div>
-<div class="slot"><b>14:00</b><h3>IP, Patents & Technology Strategy</h3><p>Patent inventive steps, intellectual property strategy and technology transfer.</p></div>
-<div class="slot"><b>16:00</b><h3>Leadership, Start-ups & Collaboration</h3><p>Future-ready leadership and interdisciplinary innovation networks.</p></div>
-</div>''',unsafe_allow_html=True)
+heading("Focus Areas","Explore the conference once; participant and speaker views below are generated from the same master record.")
+short=["Strategy","AI & GenAI","DeepTech","Research & Start-ups","IP & Patents","Leadership"]
+st.markdown('<div class="cards">'+"".join(f'<div class="card"><span class="badge">{i+1:02}</span><h3>{safe(a)}</h3><p>{safe(b)}</p></div>' for i,(a,b) in enumerate(zip(short,THEMES)))+'</div>',unsafe_allow_html=True)
 
-section_title("Conference Themes","Six connected pathways through the programme.","themes")
-themes=[
-("Strategic Technology & Innovation Management","Align technology portfolios with institutional and industrial strategy."),
-("Artificial Intelligence & Generative AI","From foundation models to responsible deployment and new research opportunities."),
-("DeepTech & Emerging Technologies","Scientific and engineering advances with transformative commercialization potential."),
-("Research, Entrepreneurship & Start-ups","Translation pathways from research insight to scalable ventures."),
-("Intellectual Property & Patent Strategy","Inventive step, portfolio strategy, protection and commercialization."),
-("Future-Ready Leadership & Sustainability","Leadership approaches for complex, technology-intensive futures.")]
-cols=st.columns(3)
-for i,(a,b) in enumerate(themes):
-    with cols[i%3]:
-        st.markdown(f'<div class="card"><span class="badge">0{i+1}</span><h3>{a}</h3><p>{b}</p></div>',unsafe_allow_html=True)
+heading("Conference Leadership")
+st.markdown("""<div class="card"><span class="badge">CONCLAVE ORGANISER</span><div class="person">Ramesh Chandra Panda</div><p>Chairman & Chief Scientist, WEGROW · IPR Head of 12 Universities and 58 Engineering/Management/Law Colleges · Conclave Organiser · Editor of 7 Scopus-indexed journals</p></div>""",unsafe_allow_html=True)
 
-section_title("Venue","Wayanad provides a distinctive setting for focused exchange and collaboration.","venue")
-st.markdown('''<div class="grid3">
-<div class="card"><span class="badge">VENUE</span><h3>The Sanihara Hotel & Resort</h3><p>Wayanad, Kerala, India</p></div>
-<div class="card"><span class="badge">DATE</span><h3>25 October 2026</h3><p>One immersive day of strategy, science, innovation and networking.</p></div>
-<div class="card"><span class="badge">EXPERIENCE</span><h3>Conference + Destination</h3><p>Venue, travel guidance, accommodation and local experience modules can be published from the platform.</p></div>
-</div>''',unsafe_allow_html=True)
-
-section_title("Register","Complete your registration. A successful submission is permanently recorded in the conference master dataset.","register")
-with st.form("registration_form", clear_on_submit=False):
-    c1,c2=st.columns(2)
-    with c1:
-        name=st.text_input("Full name *")
-        designation=st.text_input("Designation")
-        institution=st.text_input("Institution / Organization *")
-        email=st.text_input("Email *")
-    with c2:
-        phone=st.text_input("Mobile")
-        country=st.text_input("Country", value="India")
-        category=st.selectbox("Participation type",["Delegate","Keynote Speaker","Invited Speaker","Researcher","Industry Professional","Entrepreneur","Student","Other"])
-        theme=st.selectbox("Primary interest",["Artificial Intelligence & Generative AI","DeepTech & Emerging Technologies","Strategic Technology Management","Research & Entrepreneurship","Intellectual Property & Patent Strategy","Leadership & Sustainability"])
-    bio=st.text_area("Professional profile / note", height=100)
-    consent=st.checkbox("I confirm that the information provided is correct and may be used for conference administration.")
-    submitted=st.form_submit_button("Complete Registration", use_container_width=True)
-    if submitted:
-        if not name.strip() or not institution.strip() or not email.strip() or "@" not in email or not consent:
-            st.error("Please complete the required fields, enter a valid email, and confirm consent.")
+heading("People","Approved registrations automatically populate the appropriate role view.")
+role_tabs=st.tabs(["Keynotes","Invited Speakers","Delegates & Participants"])
+for tab,roles in zip(role_tabs,[["Keynote Speaker"],["Invited Speaker"],[x for x in ROLES if x not in ["Keynote Speaker","Invited Speaker"]]]):
+    with tab:
+        people=pub[pub.role.isin(roles)]
+        if people.empty:st.info("No approved entries in this category yet.")
         else:
-            reg=f"STDI-2026-{uuid.uuid4().hex[:6].upper()}"
-            row={"registration_id":reg,"timestamp":datetime.now().isoformat(timespec="seconds"),"name":name.strip(),"designation":designation.strip(),"institution":institution.strip(),"email":email.strip(),"mobile":phone.strip(),"country":country.strip(),"category":category,"theme":theme,"bio":bio.strip(),"status":"Registered"}
-            try:
-                permanent_register(row)
-                st.success(f"Registration complete. Your permanent Registration ID is {reg}.")
-                st.caption("Your registration has been saved to the conference master dataset.")
-            except ValueError as e: st.warning(str(e))
-            except Exception as e: st.error(str(e))
+            cols=st.columns(3)
+            for i,(_,r) in enumerate(people.iterrows()):
+                with cols[i%3]:
+                    talk=f'<p><b>{safe(r.talk_title)}</b></p>' if r.talk_title else ""
+                    st.markdown(f'<div class="card"><span class="badge">{safe(r.role).upper()}</span><div class="person">{safe(r["name"])}</div><div class="muted">{safe(r.designation)}<br>{safe(r.institution)} · {safe(r.country)}</div>{talk}<p>{safe(r.profile)}</p></div>',unsafe_allow_html=True)
 
-section_title("Platform Architecture","ConvergeX is reusable beyond this conference.")
-st.markdown('''<div class="grid3">
-<div class="card"><h3>Config-driven</h3><p>Event title, venue, themes, speakers and programme can be separated from the interface.</p></div>
-<div class="card"><h3>Streamlit-powered</h3><p>Python application logic with a custom React-inspired visual language and interactive forms.</p></div>
-<div class="card"><h3>Digital Twin Ready</h3><p>Future versions can connect people, ideas, sessions, technologies and organizations in an explorable graph.</p></div>
-</div>''',unsafe_allow_html=True)
+heading("Programme","A concise event journey; speaker identity is maintained once in the People directory.")
+st.markdown("""<div class="timeline"><div class="slot"><b>08:30</b><h3>Registration & Networking</h3></div><div class="slot"><b>09:30</b><h3>Opening Plenary</h3></div><div class="slot"><b>11:00</b><h3>AI, Generative AI & DeepTech</h3></div><div class="slot"><b>14:00</b><h3>IP, Patent & Technology Strategy</h3></div><div class="slot"><b>16:00</b><h3>Leadership, Start-ups & Collaboration</h3></div></div>""",unsafe_allow_html=True)
 
-st.markdown('''<div class="footer"><b>ConvergeX — Intelligent Conference Experience Platform</b><br>
-Strategic Technomanagerial DeepTech Innovation Conclave 2026 · Wayanad, Kerala, India<br><br>
-Conference leadership: Ramesh Chandra Panda · Platform design & development: Dr. Mohammad Amir Khusru Akhtar<br>
-<small>Registrations are permanently maintained in the conference master dataset. Administrative credentials are kept outside the public source code.</small></div>''',unsafe_allow_html=True)
+heading("Venue","A single destination for the conclave.")
+st.markdown("""<div class="cards"><div class="card"><span class="badge">LOCATION</span><h3>The Sanihara Hotel & Resort</h3><p>Wayanad, Kerala, India</p></div><div class="card"><span class="badge">DATE</span><h3>25 October 2026</h3><p>Strategic technology, research, innovation and collaboration.</p></div><div class="card"><span class="badge">FORMAT</span><h3>In-person Conclave</h3><p>Plenary exchange, thematic sessions and professional networking.</p></div><div class="card"><span class="badge">AUDIENCE</span><h3>Cross-disciplinary</h3><p>Academia · Research · Industry · Entrepreneurship · Technology · IP</p></div></div>""",unsafe_allow_html=True)
+
+heading("Register","Submit once. Your role determines the directory in which you appear after approval.")
+with st.form("registration",clear_on_submit=True):
+    a,b=st.columns(2)
+    with a:
+        name=st.text_input("Full name *"); designation=st.text_input("Designation"); institution=st.text_input("Institution / organization *"); email=st.text_input("Email *"); mobile=st.text_input("Mobile")
+    with b:
+        country=st.text_input("Country",value="India"); role=st.selectbox("Participation role *",ROLES); theme=st.selectbox("Primary focus",THEMES); talk=st.text_input("Proposed talk title (speaker roles)"); profile=st.text_area("Short professional profile")
+    consent=st.checkbox("I confirm the information is correct and consent to its use for conference administration.")
+    submitted=st.form_submit_button("Complete Registration",use_container_width=True)
+if submitted:
+    if not name.strip() or not institution.strip() or not email.strip() or "@" not in email or not consent:st.error("Please complete the required fields, enter a valid email and confirm consent.")
+    else:
+        rid="STDI-2026-"+uuid.uuid4().hex[:6].upper()
+        row={c:"" for c in FIELDS};row.update({"registration_id":rid,"timestamp":datetime.now().isoformat(timespec="seconds"),"name":name.strip(),"designation":designation.strip(),"institution":institution.strip(),"email":email.strip(),"mobile":mobile.strip(),"country":country.strip(),"role":role,"theme":theme,"talk_title":talk.strip(),"profile":profile.strip(),"status":"Pending","payment":"Pending","accommodation":"","certificate":""})
+        try:
+            register(row);st.success(f"Registration complete. Your permanent Registration ID is {rid}.");st.info("Your entry is pending organizer approval before it appears in the public directory.")
+        except ValueError as e:st.warning(str(e))
+        except Exception as e:st.error(str(e))
+
+heading("Registration Status","Check administrative progress without exposing contact information.")
+q=st.text_input("Registration ID",placeholder="STDI-2026-XXXXXX")
+if q:
+    hit=df[df.registration_id.str.upper()==q.strip().upper()]
+    if hit.empty:st.warning("Registration ID not found.")
+    else:
+        r=hit.iloc[0]
+        c1,c2,c3,c4=st.columns(4);c1.metric("Status",r.status or "Pending");c2.metric("Payment",r.payment or "Pending");c3.metric("Accommodation",r.accommodation or "—");c4.metric("Certificate",r.certificate or "—")
+        st.caption(f"{r['name']} · {r.role} · {r.institution}")
+
+heading("Administration","Organizer-only master control: approve, correct, export and replace the dataset.")
+with st.expander("Organizer console"):
+    u=st.text_input("Admin username",key="admin_u");p=st.text_input("Admin password",type="password",key="admin_p")
+    if u or p:
+        if not secret("ADMIN_PASSWORD"):st.warning("Set ADMIN_PASSWORD in Streamlit Secrets to activate the organizer console.")
+        elif admin_ok(u,p):
+            st.success("Organizer access granted.")
+            edited=normalize(st.data_editor(df,num_rows="dynamic",use_container_width=True,hide_index=True,key="master_editor"))
+            c1,c2,c3=st.columns(3)
+            with c1:
+                if st.button("Save master to GitHub",use_container_width=True):
+                    try:save_data(edited,"Organizer update registrations");st.success("Master dataset saved.");st.cache_data.clear()
+                    except Exception as e:st.error(str(e))
+            with c2:st.download_button("Download Excel",excel_blob(edited),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+            with c3:st.download_button("Download CSV",csv_blob(edited),"registrations.csv","text/csv",use_container_width=True)
+            upload=st.file_uploader("Replace master from corrected Excel or CSV",type=["xlsx","csv"])
+            if upload:
+                try:
+                    incoming=normalize(pd.read_excel(upload,dtype=str) if upload.name.lower().endswith(".xlsx") else pd.read_csv(upload,dtype=str))
+                    st.dataframe(incoming,use_container_width=True,hide_index=True)
+                    if st.button("Validate and replace GitHub master"):
+                        save_data(incoming,"Replace registrations from organizer workbook");st.success("Corrected master saved to GitHub.")
+                except Exception as e:st.error("File validation failed: "+str(e))
+            st.markdown("**Summary**")
+            s1,s2,s3,s4=st.columns(4);s1.metric("Total",len(df));s2.metric("Pending",sum(df.status.str.lower()=="pending"));s3.metric("Approved",len(pub));s4.metric("Keynotes",sum(df.role=="Keynote Speaker"))
+        else:st.error("Invalid organizer credentials.")
+
+st.markdown("<hr><center><b>ConvergeX — Intelligent Conference Experience Platform</b><br>Platform design & development: Dr. Mohammad Amir Khusru Akhtar</center>",unsafe_allow_html=True)
