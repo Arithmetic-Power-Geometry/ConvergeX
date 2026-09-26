@@ -141,7 +141,7 @@ for tab,roles in zip(role_tabs,[["Keynote Speaker"],["Invited Speaker"],[x for x
                     talk=f'<p><b>{safe(r.talk_title)}</b></p>' if r.talk_title else ""
                     st.markdown(f'<div class="card"><span class="badge">{safe(r.role).upper()}</span><div class="person">{safe(r["name"])}</div><div class="muted">{safe(r.designation)}<br>{safe(r.institution)} · {safe(r.country)}</div>{talk}<p>{safe(r.profile)}</p></div>',unsafe_allow_html=True)
 
-heading("Conference Digital Twin","A live map generated from approved conference data — no duplicate entry and no dummy participants.","twin")
+heading("Conference Digital Twin","Explore the living connections across people, institutions, ideas, talks and the conference programme.","twin")
 twin_people=pub.copy()
 theme_counts={t:int((twin_people.theme==t).sum()) for t in THEMES}
 inst_count=int(twin_people.institution[twin_people.institution.str.strip()!=""].nunique()) if len(twin_people) else 0
