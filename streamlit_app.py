@@ -10,7 +10,7 @@ st.set_page_config(page_title="ConvergeX 2026",page_icon="✦",layout="wide",ini
 REPO="Arithmetic-Power-Geometry/ConvergeX"
 DATA_PATH="data/registrations.csv"
 PROGRAMME_PATH="data/programme.csv"
-PROGRAMME_FIELDS=["time","title","description","status"]
+PROGRAMME_FIELDS=["date","time","title","description","status"]
 RAW="https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH
 EVENT_DATE=datetime(2026,10,25,9,0)
 DEFAULT_ROLES=["Delegate","Keynote Speaker","Invited Speaker","Researcher","Industry Professional","Entrepreneur","Student","Organizing Committee","Other"]
@@ -192,25 +192,43 @@ def public_report_blob(df):
             ws.column_dimensions[col].width=width
     return out.getvalue()
 
+def github_read_programme():
+    url="https://api.github.com/repos/"+REPO+"/contents/"+PROGRAMME_PATH+"?ref=main"
+    token=secret("GITHUB_TOKEN").strip()
+    headers={"Accept":"application/vnd.github+json","User-Agent":"ConvergeX-Streamlit","X-GitHub-Api-Version":"2022-11-28"}
+    if token: headers["Authorization"]="Bearer "+token
+    req=urllib.request.Request(url,headers=headers)
+    with urllib.request.urlopen(req,timeout=20) as r:
+        obj=json.loads(r.read().decode("utf-8"))
+    raw=base64.b64decode(obj.get("content","").replace("\n",""))
+    x=pd.read_csv(io.BytesIO(raw),dtype=str).fillna("") if raw.strip() else pd.DataFrame()
+    for c in PROGRAMME_FIELDS:
+        if c not in x.columns:x[c]=""
+    return x[PROGRAMME_FIELDS],obj.get("sha","")
+
 def load_programme():
-    p=local_path("programme.csv")
     try:
-        if __import__("os").path.exists(p):
-            x=pd.read_csv(p,dtype=str).fillna("")
-        else:
-            url="https://raw.githubusercontent.com/"+REPO+"/main/"+PROGRAMME_PATH+"?v="+uuid.uuid4().hex
-            with urllib.request.urlopen(url,timeout=12) as r:x=pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna("")
-            x.to_csv(p,index=False)
-        for c in PROGRAMME_FIELDS:
-            if c not in x.columns:x[c]=""
-        return x[PROGRAMME_FIELDS]
-    except Exception:return pd.DataFrame(columns=PROGRAMME_FIELDS)
+        x,_=github_read_programme()
+        return x
+    except Exception:
+        return pd.DataFrame(columns=PROGRAMME_FIELDS)
 
 def save_programme(pdf):
+    token=secret("GITHUB_TOKEN").strip()
+    if not token: raise RuntimeError("GitHub storage is not configured.")
+    x=pdf.copy().fillna("")
     for c in PROGRAMME_FIELDS:
-        if c not in pdf.columns:pdf[c]=""
-    pdf[PROGRAMME_FIELDS].fillna("").to_csv(local_path("programme.csv"),index=False)
-    return True
+        if c not in x.columns:x[c]=""
+    x=x[PROGRAMME_FIELDS]
+    _,sha=github_read_programme()
+    payload={"message":"Update ConvergeX programme","content":base64.b64encode(x.to_csv(index=False).encode("utf-8")).decode("ascii"),"branch":"main"}
+    if sha: payload["sha"]=sha
+    url="https://api.github.com/repos/"+REPO+"/contents/"+PROGRAMME_PATH
+    headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json","Content-Type":"application/json","User-Agent":"ConvergeX-Streamlit","X-GitHub-Api-Version":"2022-11-28"}
+    req=urllib.request.Request(url,data=json.dumps(payload).encode("utf-8"),method="PUT",headers=headers)
+    with urllib.request.urlopen(req,timeout=25) as r:r.read()
+    verify,_=github_read_programme()
+    return len(verify)==len(x)
 
 def admin_ok(u,p):
     au=secret("ADMIN_USERNAME","ramesh")
@@ -397,10 +415,16 @@ else:
     visible=programme[programme.status.str.lower().isin(["published","active","confirmed"])]
     if visible.empty: st.markdown('<div class="card"><span class="badge">PROGRAMME</span><h3>Coming soon</h3><p>The detailed hour-wise programme will be published here by the organizer.</p></div>',unsafe_allow_html=True)
     else:
-        html='<div class="timeline">'
-        for _,r in visible.iterrows():
-            html+=f'<div class="slot"><b>{safe(r["time"])}</b><h3>{safe(r["title"])}</h3><p>{safe(r["description"])}</p></div>'
-        st.markdown(html+'</div>',unsafe_allow_html=True)
+        visible=visible.copy()
+        visible["date"]=visible["date"].replace("",EVENT_DATE.strftime("%Y-%m-%d"))
+        for d,day in visible.groupby("date",sort=False):
+            try: day_label=datetime.strptime(str(d),"%Y-%m-%d").strftime("%A · %d %B %Y")
+            except Exception: day_label=str(d)
+            st.markdown(f'<div class="badge">{safe(day_label)}</div>',unsafe_allow_html=True)
+            html='<div class="timeline">'
+            for _,r in day.iterrows():
+                html+=f'<div class="slot"><b>{safe(r["time"])}</b><h3>{safe(r["title"])}</h3><p>{safe(r["description"])}</p></div>'
+            st.markdown(html+'</div>',unsafe_allow_html=True)
 
 heading("Venue","A single destination for the conclave.","venue")
 st.markdown("""<div class="cards"><div class="card"><span class="badge">LOCATION</span><h3>The Sanihara Hotel & Resort</h3><p>Wayanad, Kerala, India</p></div><div class="card"><span class="badge">DATE</span><h3>25 October 2026</h3><p>Strategic technology, research, innovation and collaboration.</p></div><div class="card"><span class="badge">FORMAT</span><h3>In-person Conclave</h3><p>Plenary exchange, thematic sessions and professional networking.</p></div><div class="card"><span class="badge">AUDIENCE</span><h3>Cross-disciplinary</h3><p>Academia · Research · Industry · Entrepreneurship · Technology · IP</p></div></div>""",unsafe_allow_html=True)
@@ -613,10 +637,12 @@ with st.expander("Organizer console"):
             with progtab:
                 st.caption("Add the programme hour by hour. Use status Published to make a row visible publicly; Draft remains private.")
                 ped=programme.copy()
-                if ped.empty: ped=pd.DataFrame([{"time":"","title":"","description":"","status":"Draft"}],columns=PROGRAMME_FIELDS)
-                ped=st.data_editor(ped,num_rows="dynamic",use_container_width=True,hide_index=True,column_config={"time":st.column_config.TextColumn("Time",help="Example: 09:30 AM"),"title":st.column_config.TextColumn("Session title"),"description":st.column_config.TextColumn("Description"),"status":st.column_config.SelectboxColumn("Status",options=["Draft","Published"])},key="programme_editor")
+                if ped.empty: ped=pd.DataFrame([{"date":EVENT_DATE.strftime("%Y-%m-%d"),"time":"","title":"","description":"","status":"Draft"}],columns=PROGRAMME_FIELDS)
+                ped=st.data_editor(ped,num_rows="dynamic",use_container_width=True,hide_index=True,column_config={"date":st.column_config.TextColumn("Date",help="YYYY-MM-DD, for example 2026-10-25"),"time":st.column_config.TextColumn("Time",help="Example: 09:30 AM"),"title":st.column_config.TextColumn("Session title"),"description":st.column_config.TextColumn("Description"),"status":st.column_config.SelectboxColumn("Status",options=["Draft","Published"])},key="programme_editor")
                 if st.button("Save programme",type="primary",use_container_width=True):
-                    try: save_programme(ped); st.success("Programme saved. Published rows will appear in the Programme section after refresh.")
+                    try:
+                        if save_programme(ped): st.success("Programme saved permanently to GitHub. Published rows will appear publicly after refresh.")
+                        else: st.error("Programme save could not be verified.")
                     except Exception as e: st.error(str(e))
             with optiontab:
                 st.caption("Edit the choices shown in the public registration form. Saving here updates Participation role and Primary focus across the app.")
