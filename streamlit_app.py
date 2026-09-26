@@ -443,7 +443,8 @@ if submitted:
             st.session_state["registration_receipt"]={"id":rid,"remote":remote_saved}
             st.rerun()
         except ValueError as e:st.warning(str(e))
-        except Exception as e:st.error("Registration was not saved. "+str(e))
+        except Exception:
+            st.error("Registration could not be completed. Please try again or contact the organizer.")
 
 heading("Registration Status","Check administrative progress without exposing contact information.","status")
 q=st.text_input("Registration ID",placeholder="STDI-2026-XXXXXX")
