@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import csv, io, json, uuid, base64, urllib.request, urllib.error, hashlib, hmac
+import csv, io, json, uuid, base64, urllib.request, urllib.error, urllib.parse, hashlib, hmac
 from datetime import datetime
 from io import BytesIO
 
@@ -83,61 +83,47 @@ def save_taxonomy(roles,themes):
 
 ROLES,THEMES=load_taxonomy()
 
-def github_token():
-    return secret("GITHUB_TOKEN")
+def db_config():
+    url=secret("SUPABASE_URL").strip().rstrip("/")
+    key=secret("SUPABASE_KEY").strip()
+    return url,key
 
-def github_access():
-    token=github_token().strip()
-    if not token: return {"read":True,"write":False,"message":"Persistent writes are not configured."}
-    url="https://api.github.com/repos/"+REPO
-    req=urllib.request.Request(url,headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28"})
+def db_ready():
+    url,key=db_config()
+    return bool(url and key)
+
+def db_request(method,path,payload=None,prefer="return=representation"):
+    url,key=db_config()
+    if not url or not key: raise RuntimeError("Conference database is not configured.")
+    headers={"apikey":key,"Authorization":"Bearer "+key,"Content-Type":"application/json","Accept":"application/json"}
+    if prefer: headers["Prefer"]=prefer
+    data=None if payload is None else json.dumps(payload).encode("utf-8")
+    req=urllib.request.Request(url+"/rest/v1/"+path,data=data,method=method,headers=headers)
     try:
-        with urllib.request.urlopen(req,timeout=15) as r: obj=json.loads(r.read().decode("utf-8"))
-        perms=obj.get("permissions",{}) or {}
-        return {"read":True,"write":bool(perms.get("push") or perms.get("admin") or perms.get("maintain")),"message":""}
+        with urllib.request.urlopen(req,timeout=20) as r:
+            raw=r.read()
+            return json.loads(raw.decode("utf-8")) if raw else []
     except urllib.error.HTTPError as e:
-        if e.code==401: return {"read":True,"write":False,"message":"The configured GitHub write credential is invalid or expired."}
-        try: detail=json.loads(e.read().decode("utf-8")).get("message",str(e))
-        except Exception: detail=str(e)
-        return {"read":True,"write":False,"message":detail}
-    except Exception as e:
-        return {"read":True,"write":False,"message":str(e)}
+        detail=e.read().decode("utf-8",errors="replace")
+        raise RuntimeError("Conference database request failed ("+str(e.code)+"). "+detail[:300])
 
-def github_read_csv(path=DATA_PATH):
-    # The repository is public: master reads must never depend on a private token.
-    url="https://raw.githubusercontent.com/"+REPO+"/main/"+path+"?v="+uuid.uuid4().hex
-    req=urllib.request.Request(url,headers={"Cache-Control":"no-cache","User-Agent":"ConvergeX"})
-    with urllib.request.urlopen(req,timeout=15) as r:
-        raw=r.read()
-    return normalize(pd.read_csv(io.BytesIO(raw),dtype=str)),""
-
-
-def github_write_csv(df,path=DATA_PATH,message="Update ConvergeX registrations"):
-    token=github_token().strip()
-    if not token: return False
-    access=github_access()
-    if not access["write"]: raise PermissionError(access["message"] or "GitHub Contents write access is unavailable.")
-    api="https://api.github.com/repos/"+REPO+"/contents/"+path
-    headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28"}
-    req=urllib.request.Request(api+"?ref=main",headers=headers)
-    with urllib.request.urlopen(req,timeout=15) as r: meta=json.loads(r.read().decode("utf-8"))
-    content=normalize(df).to_csv(index=False).encode("utf-8")
-    payload={"message":message,"content":base64.b64encode(content).decode("ascii"),"branch":"main","sha":meta["sha"]}
-    put_headers=dict(headers); put_headers["Content-Type"]="application/json"
-    req=urllib.request.Request(api,data=json.dumps(payload).encode("utf-8"),method="PUT",headers=put_headers)
-    with urllib.request.urlopen(req,timeout=20): pass
-    return True
+def db_health():
+    if not db_ready(): return False,"Database secrets are not configured."
+    try:
+        db_request("GET","registrations?select=registration_id&limit=1",prefer="")
+        return True,""
+    except Exception as e: return False,str(e)
 
 def load_data(force_remote=False):
-    p=local_path("registrations.csv")
     try:
-        remote_df,_=github_read_csv()
-        remote_df=normalize(remote_df)
-        remote_df.to_csv(p,index=False)
-        return remote_df
+        rows=db_request("GET","registrations?select=*&order=timestamp.asc",prefer="")
+        df=normalize(pd.DataFrame(rows))
+        df.to_csv(local_path("registrations.csv"),index=False)
+        return df
     except Exception:
+        p=local_path("registrations.csv")
         try:
-            if __import__("os").path.exists(p): return normalize(pd.read_csv(p,dtype=str))
+            if __import__("os").path.exists(p): return normalize(pd.read_csv(p,dtype=str).fillna(""))
         except Exception: pass
         return normalize(pd.DataFrame())
 
@@ -151,36 +137,32 @@ def excel_blob(df):
 def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
     clean=normalize(df)
     deleted_ids=set(deleted_ids or [])
-    remote_saved=False
-    remote_error=""
     try:
-        latest,_=github_read_csv()
         if deleted_ids:
-            latest=latest[~latest["registration_id"].isin(deleted_ids)].copy()
-        clean=merge_records(latest,clean)
-    except Exception:
-        pass
-    clean.to_csv(local_path("registrations.csv"),index=False)
-    if github_token():
-        try:
-            remote_saved=github_write_csv(clean,DATA_PATH,message)
-        except Exception as e:
-            remote_error=str(e)
-    st.session_state["last_remote_saved"]=remote_saved
-    st.session_state["last_remote_error"]=remote_error
-    return remote_saved
+            for rid in deleted_ids:
+                db_request("DELETE","registrations?registration_id=eq."+urllib.parse.quote(str(rid),safe=""),prefer="return=minimal")
+        if len(clean):
+            records=clean.to_dict(orient="records")
+            db_request("POST","registrations?on_conflict=registration_id",records,prefer="resolution=merge-duplicates,return=minimal")
+        clean.to_csv(local_path("registrations.csv"),index=False)
+        st.session_state["last_remote_saved"]=True
+        st.session_state["last_remote_error"]=""
+        return True
+    except Exception as e:
+        st.session_state["last_remote_saved"]=False
+        st.session_state["last_remote_error"]=str(e)
+        return False
 
 def register(row):
-    df=load_data()
-    if len(df) and any(df.email.str.lower()==row["email"].lower()): raise ValueError("This email address is already registered.")
-    merged=merge_records(df,pd.DataFrame([row]))
-    if not any(merged.registration_id==row["registration_id"]):
-        raise ValueError("Registration could not be added to the master record.")
-    remote_saved=save_data(merged,"Add conference registration "+row["registration_id"])
-    if not remote_saved:
-        err=st.session_state.get("last_remote_error","")
-        raise RuntimeError("The registration could not be committed to the conference master."+(" "+err if err else ""))
-    return True
+    email=str(row["email"]).strip().lower()
+    try:
+        existing=db_request("GET","registrations?select=registration_id&email=ilike."+urllib.parse.quote(email,safe="")+"&limit=1",prefer="")
+        if existing: raise ValueError("This email address is already registered.")
+        db_request("POST","registrations",[row],prefer="return=minimal")
+        return True
+    except ValueError: raise
+    except Exception as e:
+        raise RuntimeError("The registration could not be saved permanently. "+str(e))
 
 def load_programme():
     p=local_path("programme.csv")
@@ -344,9 +326,9 @@ with st.form("registration",clear_on_submit=True):
     consent=st.checkbox("I confirm the information is correct and consent to its use for conference administration.")
     submitted=st.form_submit_button("Complete Registration",use_container_width=True)
 if submitted:
-    access=github_access()
-    if not access["write"]:
-        st.error("Registration is temporarily unavailable because secure persistent storage is not writable. Please contact the organizer.")
+    storage_ok,storage_error=db_health()
+    if not storage_ok:
+        st.error("Registration is temporarily unavailable because secure persistent storage is not ready. Please contact the organizer.")
         submitted=False
 if submitted:
     missing=[]
@@ -385,25 +367,25 @@ with st.expander("Organizer console"):
             st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
-            access=github_access()
-            if access["write"]:
-                st.success("Registration storage: connected with read/write access.")
+            storage_ok,storage_error=db_health()
+            if storage_ok:
+                st.success("Registration storage: persistent database connected.")
             else:
-                st.warning("Registration master can be read and refreshed, but new registrations cannot be saved permanently. "+access["message"])
+                st.warning("Registration storage is not ready. "+storage_error)
             regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
                 if st.button("Refresh registration master",use_container_width=False):
                     try:
-                        fresh,_=github_read_csv()
-                        fresh=normalize(fresh)
+                        rows=db_request("GET","registrations?select=*&order=timestamp.asc",prefer="")
+                        fresh=normalize(pd.DataFrame(rows))
                         fresh.to_csv(local_path("registrations.csv"),index=False)
-                        st.session_state["master_refresh_message"]="Registration master refreshed from repository."
+                        st.session_state["master_refresh_message"]="Registration master refreshed from persistent database."
                     except Exception as e:
                         st.session_state["master_refresh_error"]="Refresh failed: "+str(e)
                     st.rerun()
                 if st.session_state.pop("master_refresh_message",None):
-                    st.success("Registration master refreshed from repository.")
+                    st.success("Registration master refreshed from persistent database.")
                 refresh_error=st.session_state.pop("master_refresh_error",None)
                 if refresh_error: st.error(refresh_error)
                 review=df.copy()
