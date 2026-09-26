@@ -72,8 +72,8 @@ def github_token():
     return secret("GITHUB_TOKEN")
 
 def github_access():
-    token=github_token()
-    if not token: return {"read":False,"write":False,"message":"GITHUB_TOKEN is not configured."}
+    token=github_token().strip()
+    if not token: return {"read":True,"write":False,"message":"Persistent writes are not configured."}
     url="https://api.github.com/repos/"+REPO
     req=urllib.request.Request(url,headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28"})
     try:
@@ -81,33 +81,35 @@ def github_access():
         perms=obj.get("permissions",{}) or {}
         return {"read":True,"write":bool(perms.get("push") or perms.get("admin") or perms.get("maintain")),"message":""}
     except urllib.error.HTTPError as e:
+        if e.code==401: return {"read":True,"write":False,"message":"The configured GitHub write credential is invalid or expired."}
         try: detail=json.loads(e.read().decode("utf-8")).get("message",str(e))
         except Exception: detail=str(e)
-        return {"read":False,"write":False,"message":detail}
+        return {"read":True,"write":False,"message":detail}
     except Exception as e:
-        return {"read":False,"write":False,"message":str(e)}
+        return {"read":True,"write":False,"message":str(e)}
 
 def github_read_csv(path=DATA_PATH):
-    url="https://api.github.com/repos/"+REPO+"/contents/"+path+"?ref=main"
-    headers={"Accept":"application/vnd.github+json","User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28"}
-    if github_token(): headers["Authorization"]="Bearer "+github_token()
-    req=urllib.request.Request(url,headers=headers)
+    # The repository is public: master reads must never depend on a private token.
+    url="https://raw.githubusercontent.com/"+REPO+"/main/"+path+"?v="+uuid.uuid4().hex
+    req=urllib.request.Request(url,headers={"Cache-Control":"no-cache","User-Agent":"ConvergeX"})
     with urllib.request.urlopen(req,timeout=15) as r:
-        obj=json.loads(r.read().decode("utf-8"))
-    raw=base64.b64decode(obj.get("content",""))
-    return normalize(pd.read_csv(io.BytesIO(raw),dtype=str)),obj.get("sha","")
+        raw=r.read()
+    return normalize(pd.read_csv(io.BytesIO(raw),dtype=str)),""
+
 
 def github_write_csv(df,path=DATA_PATH,message="Update ConvergeX registrations"):
-    token=github_token()
+    token=github_token().strip()
     if not token: return False
     access=github_access()
-    if not access["write"]: raise PermissionError("GitHub token does not have Contents write access to "+REPO+".")
-    current,sha=github_read_csv(path)
+    if not access["write"]: raise PermissionError(access["message"] or "GitHub Contents write access is unavailable.")
+    api="https://api.github.com/repos/"+REPO+"/contents/"+path
+    headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28"}
+    req=urllib.request.Request(api+"?ref=main",headers=headers)
+    with urllib.request.urlopen(req,timeout=15) as r: meta=json.loads(r.read().decode("utf-8"))
     content=normalize(df).to_csv(index=False).encode("utf-8")
-    payload={"message":message,"content":base64.b64encode(content).decode("ascii"),"branch":"main"}
-    if sha: payload["sha"]=sha
-    url="https://api.github.com/repos/"+REPO+"/contents/"+path
-    req=urllib.request.Request(url,data=json.dumps(payload).encode("utf-8"),method="PUT",headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json"})
+    payload={"message":message,"content":base64.b64encode(content).decode("ascii"),"branch":"main","sha":meta["sha"]}
+    put_headers=dict(headers); put_headers["Content-Type"]="application/json"
+    req=urllib.request.Request(api,data=json.dumps(payload).encode("utf-8"),method="PUT",headers=put_headers)
     with urllib.request.urlopen(req,timeout=20): pass
     return True
 
@@ -363,10 +365,8 @@ with st.expander("Organizer console"):
             access=github_access()
             if access["write"]:
                 st.success("Registration storage: connected with read/write access.")
-            elif access["read"]:
-                st.error("Registration storage is read-only. GITHUB_TOKEN must have Contents: Read and write permission before registrations can be accepted permanently.")
             else:
-                st.error("Registration storage is not connected. "+access["message"])
+                st.warning("Registration master can be read and refreshed, but new registrations cannot be saved permanently. "+access["message"])
             regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
