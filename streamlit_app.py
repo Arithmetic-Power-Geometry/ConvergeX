@@ -128,7 +128,7 @@ st.markdown('<div class="cards">'+"".join(f'<div class="card"><span class="badge
 heading("Conference Leadership")
 st.markdown("""<div class="card"><span class="badge">CONCLAVE ORGANISER</span><div class="person">Ramesh Chandra Panda</div><p>Chairman & Chief Scientist, WEGROW · IPR Head of 12 Universities and 58 Engineering/Management/Law Colleges · Conclave Organiser · Editor of 7 Scopus-indexed journals</p></div>""",unsafe_allow_html=True)
 
-heading("People","Approved registrations automatically populate the appropriate role view.","people")
+heading("People","Completed registrations automatically populate the appropriate role view.","people")
 role_tabs=st.tabs(["Keynotes","Invited Speakers","Delegates & Participants"])
 for tab,roles in zip(role_tabs,[["Keynote Speaker"],["Invited Speaker"],[x for x in ROLES if x not in ["Keynote Speaker","Invited Speaker"]]]):
     with tab:
@@ -175,9 +175,9 @@ if submitted:
     if missing: st.warning("Please complete: "+", ".join(missing)+".")
     else:
         rid="STDI-2026-"+uuid.uuid4().hex[:6].upper()
-        row={c:"" for c in FIELDS};row.update({"registration_id":rid,"timestamp":datetime.now().isoformat(timespec="seconds"),"name":name.strip(),"designation":designation.strip(),"institution":institution.strip(),"email":email.strip(),"mobile":mobile.strip(),"country":country.strip(),"role":role,"theme":theme,"talk_title":talk.strip(),"profile":profile.strip(),"status":"Pending","payment":"Pending","accommodation":"","certificate":""})
+        row={c:"" for c in FIELDS};row.update({"registration_id":rid,"timestamp":datetime.now().isoformat(timespec="seconds"),"name":name.strip(),"designation":designation.strip(),"institution":institution.strip(),"email":email.strip(),"mobile":mobile.strip(),"country":country.strip(),"role":role,"theme":theme,"talk_title":talk.strip(),"profile":profile.strip(),"status":"Approved","payment":"Pending","accommodation":"","certificate":""})
         try:
-            register(row);st.success(f"Registration complete. Your Registration ID is {rid}.");st.info("Your entry is pending organizer approval before it appears in the public directory.")
+            register(row);st.success(f"Registration complete. Your Registration ID is {rid}.");st.info("Your registration is active and is now eligible to appear in the appropriate public participant section.")
         except ValueError as e:st.warning(str(e))
         except Exception as e:st.error(str(e))
 
@@ -202,7 +202,7 @@ with st.expander("Organizer console"):
             st.success("Organizer access granted.")
             regtab,progtab=st.tabs(["Registration master","Programme editor"])
             with regtab:
-                st.caption("Edit the master directly like a spreadsheet. Press Save master when finished.")
+                st.caption("Edit cells directly. Status controls public visibility: Approved/Confirmed/Active are shown; Hidden/Pending are not. Press Save master when finished.")
                 edited=normalize(st.data_editor(df,num_rows="dynamic",use_container_width=True,hide_index=True,key="master_editor"))
                 c1,c2,c3=st.columns(3)
                 with c1:
