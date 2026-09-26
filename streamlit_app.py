@@ -68,14 +68,52 @@ def save_taxonomy(roles,themes):
 
 ROLES,THEMES=load_taxonomy()
 
+def github_token():
+    return secret("GITHUB_TOKEN")
+
+def github_read_csv(path=DATA_PATH):
+    url="https://api.github.com/repos/"+REPO+"/contents/"+path+"?ref=main"
+    headers={"Accept":"application/vnd.github+json","User-Agent":"ConvergeX"}
+    if github_token(): headers["Authorization"]="Bearer "+github_token()
+    req=urllib.request.Request(url,headers=headers)
+    with urllib.request.urlopen(req,timeout=15) as r:
+        obj=json.loads(r.read().decode("utf-8"))
+    raw=base64.b64decode(obj.get("content",""))
+    return normalize(pd.read_csv(io.BytesIO(raw),dtype=str)),obj.get("sha","")
+
+def github_write_csv(df,path=DATA_PATH,message="Update ConvergeX registrations"):
+    token=github_token()
+    if not token: return False
+    current,sha=github_read_csv(path)
+    content=normalize(df).to_csv(index=False).encode("utf-8")
+    payload={"message":message,"content":base64.b64encode(content).decode("ascii"),"branch":"main"}
+    if sha: payload["sha"]=sha
+    url="https://api.github.com/repos/"+REPO+"/contents/"+path
+    req=urllib.request.Request(url,data=json.dumps(payload).encode("utf-8"),method="PUT",headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token,"User-Agent":"ConvergeX","Content-Type":"application/json"})
+    with urllib.request.urlopen(req,timeout=20): pass
+    return True
+
 def load_data():
     p=local_path("registrations.csv")
+    local_df=normalize(pd.DataFrame())
     try:
-        if __import__("os").path.exists(p): return normalize(pd.read_csv(p,dtype=str))
-        req=urllib.request.Request(RAW+"?v="+uuid.uuid4().hex,headers={"Cache-Control":"no-cache"})
-        with urllib.request.urlopen(req,timeout=15) as r:
-            df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str)); df.to_csv(p,index=False); return df
-    except Exception:return normalize(pd.DataFrame())
+        if __import__("os").path.exists(p): local_df=normalize(pd.read_csv(p,dtype=str))
+    except Exception: pass
+    remote_df=normalize(pd.DataFrame())
+    try:
+        remote_df,_=github_read_csv()
+    except Exception:
+        try:
+            req=urllib.request.Request(RAW+"?v="+uuid.uuid4().hex,headers={"Cache-Control":"no-cache"})
+            with urllib.request.urlopen(req,timeout=15) as r: remote_df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str))
+        except Exception: pass
+    if len(local_df) and len(remote_df):
+        df=normalize(pd.concat([remote_df,local_df],ignore_index=True))
+    elif len(local_df): df=local_df
+    else: df=remote_df
+    try: df.to_csv(p,index=False)
+    except Exception: pass
+    return df
 
 def csv_blob(df): return normalize(df).to_csv(index=False).encode("utf-8-sig")
 
@@ -84,13 +122,19 @@ def excel_blob(df):
     with pd.ExcelWriter(out,engine="openpyxl") as w: normalize(df).to_excel(w,index=False,sheet_name="Registrations")
     return out.getvalue()
 
-def save_data(df,message=""):
-    p=local_path("registrations.csv"); normalize(df).to_csv(p,index=False); return True
+def save_data(df,message="Update ConvergeX registrations"):
+    clean=normalize(df)
+    clean.to_csv(local_path("registrations.csv"),index=False)
+    try:
+        github_write_csv(clean,DATA_PATH,message)
+    except Exception:
+        pass
+    return True
 
 def register(row):
     df=load_data()
     if len(df) and any(df.email.str.lower()==row["email"].lower()): raise ValueError("This email address is already registered.")
-    save_data(pd.concat([df,pd.DataFrame([row])],ignore_index=True))
+    save_data(pd.concat([df,pd.DataFrame([row])],ignore_index=True),"Add conference registration "+row["registration_id"])
     return True
 
 def load_programme():
@@ -151,7 +195,7 @@ def heading(a,b="",anchor=""):
 
 st.markdown('<div class="nav"><div class="logo">Converge<span>X</span></div><div class="navtext"><a href="#home">Home</a><a href="#experience">Experience</a><a href="#people">People</a><a href="#twin">Digital Twin</a><a href="#programme">Programme</a><a href="#venue">Venue</a><a href="#register">Register</a><a href="#status">Status</a><a href="#admin">Organizer</a></div><div class="badge">2026</div></div>',unsafe_allow_html=True)
 st.markdown('<div id="home" style="scroll-margin-top:85px"></div>',unsafe_allow_html=True)
-st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{registration_count}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role=="Keynote Speaker"])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
+st.markdown(f"""<section class="hero"><div class="k">INTELLIGENT CONFERENCE EXPERIENCE PLATFORM</div><h1>STRATEGIC <span class="gold">TECHNOMANAGERIAL</span><br><span class="cyan">DEEPTECH INNOVATION</span><br>CONCLAVE 2026</h1><div class="lead">Where Strategy Meets Innovation to Shape Tomorrow.<br><b>25 October 2026 · The Sanihara Hotel & Resort · Wayanad, Kerala, India</b></div><div class="metrics"><div class="metric"><b>{days}</b><span>DAYS TO CONCLAVE</span></div><div class="metric"><b>{registration_count}</b><span>REGISTRATIONS</span></div><div class="metric"><b>{len(pub[pub.role.str.lower().str.contains("keynote",na=False)])}</b><span>APPROVED KEYNOTES</span></div><div class="metric"><b>{len(pub)}</b><span>PUBLIC PARTICIPANTS</span></div></div></section>""",unsafe_allow_html=True)
 
 heading("Living Constellation","Six connected pathways through one conference experience.","experience")
 st.markdown("""<div class="const"><div class="core">CONCLAVE<br>2026</div><div class="orb o1">AI</div><div class="orb o2">DeepTech</div><div class="orb o3">Research</div><div class="orb o4">Enterprise</div><div class="orb o5">IP Strategy</div><div class="orb o6">Leadership</div></div>""",unsafe_allow_html=True)
@@ -281,6 +325,10 @@ with st.expander("Organizer console"):
             st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
+            if github_token():
+                st.caption("Data store: repository-backed master with local cache.")
+            else:
+                st.caption("Data store: local app storage. Add GITHUB_TOKEN in Streamlit Secrets for repository persistence across redeployments.")
             regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
