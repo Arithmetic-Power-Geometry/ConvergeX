@@ -85,9 +85,13 @@ ROLES,THEMES=load_taxonomy()
 
 def load_data(force_remote=False):
     p=local_path("registrations.csv")
+    if "registrations_master" in st.session_state and not force_remote:
+        return normalize(st.session_state["registrations_master"].copy())
     try:
         if __import__("os").path.exists(p):
-            return normalize(pd.read_csv(p,dtype=str).fillna(""))
+            df=normalize(pd.read_csv(p,dtype=str).fillna(""))
+            st.session_state["registrations_master"]=df.copy()
+            return df
     except Exception:
         pass
     # Seed once from the repository CSV if available; all later edits stay in Streamlit storage.
@@ -96,10 +100,12 @@ def load_data(force_remote=False):
         with urllib.request.urlopen(url,timeout=12) as r:
             df=normalize(pd.read_csv(io.BytesIO(r.read()),dtype=str).fillna(""))
         df.to_csv(p,index=False)
+        st.session_state["registrations_master"]=df.copy()
         return df
     except Exception:
         df=normalize(pd.DataFrame())
         df.to_csv(p,index=False)
+        st.session_state["registrations_master"]=df.copy()
         return df
 
 def csv_blob(df): return normalize(df).to_csv(index=False).encode("utf-8-sig")
@@ -114,6 +120,7 @@ def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
     try:
         clean=normalize(df)
         clean.to_csv(local_path("registrations.csv"),index=False)
+        st.session_state["registrations_master"]=clean.copy()
         st.session_state["last_remote_saved"]=True
         st.session_state["last_remote_error"]=""
         return True
@@ -337,8 +344,10 @@ with st.expander("Organizer console"):
                 st.caption("Use Download Excel backup regularly. Streamlit Community Cloud local files can reset when the app is redeployed or restarted.")
                 if st.button("Refresh registration master",use_container_width=False):
                     try:
-                        fresh=load_data()
+                        st.session_state.pop("registrations_master",None)
+                        fresh=load_data(force_remote=True)
                         fresh.to_csv(local_path("registrations.csv"),index=False)
+                        st.session_state["registrations_master"]=fresh.copy()
                         st.session_state["master_refresh_message"]="Registration master refreshed."
                     except Exception as e:
                         st.session_state["master_refresh_error"]="Refresh failed: "+str(e)
@@ -405,6 +414,34 @@ with st.expander("Organizer console"):
                             except Exception as e:st.error("Could not save the registration sheet. "+str(e))
                     with c2:
                         st.download_button("Download Excel backup",excel_blob(review),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+                    approved_admin=approved(normalize(review.drop(columns=["delete"],errors="ignore")))
+                    st.markdown("#### Approved registrations")
+                    if approved_admin.empty:
+                        st.caption("No approved registrations yet.")
+                    else:
+                        st.dataframe(
+                            approved_admin,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "registration_id":"Registration ID",
+                                "timestamp":"Received",
+                                "name":"Name",
+                                "designation":"Designation",
+                                "institution":"Institution",
+                                "email":"Email",
+                                "mobile":"Mobile",
+                                "country":"Country",
+                                "role":"Role",
+                                "theme":"Theme",
+                                "talk_title":"Talk title",
+                                "profile":"Profile",
+                                "status":"Status",
+                                "payment":"Payment",
+                                "accommodation":"Accommodation",
+                                "certificate":"Certificate"
+                            }
+                        )
                     st.markdown("#### Backup & restore")
                     upload=st.file_uploader("Upload registration backup",type=["xlsx","csv"],key="registration_backup_upload",help="Uploaded rows are merged by Registration ID. Existing populated data is preserved unless the uploaded file provides a replacement value.")
                     if upload is not None:
