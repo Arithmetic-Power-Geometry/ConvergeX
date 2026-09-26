@@ -204,34 +204,46 @@ if q:
         c1,c2,c3,c4=st.columns(4);c1.metric("Status",r.status or "Pending");c2.metric("Payment",r.payment or "Pending");c3.metric("Accommodation",r.accommodation or "—");c4.metric("Certificate",r.certificate or "—")
         st.caption(f"{r['name']} · {r.role} · {r.institution}")
 
-heading("Administration","Organizer-only master control: approve, correct, export and replace the dataset.")
+heading("Administration","Organizer-only control for registrations and the hour-wise programme.")
 with st.expander("Organizer console"):
-    u=st.text_input("Admin username",key="admin_u");p=st.text_input("Admin password",type="password",key="admin_p")
+    u=st.text_input("Admin username",key="admin_u")
+    p=st.text_input("Admin password",type="password",key="admin_p")
     if u or p:
-        if not secret("ADMIN_PASSWORD"):st.warning("Set ADMIN_PASSWORD in Streamlit Secrets to activate the organizer console.")
+        if not secret("ADMIN_PASSWORD"):
+            st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
-            regtab, progtab = st.tabs(["Registration master","Programme editor"])
+            regtab,progtab=st.tabs(["Registration master","Programme editor"])
             with regtab:
-                st.caption("Edit cells directly below, add/delete rows, then press Save. Excel download and corrected-file upload are also available.")
+                st.caption("Edit the master directly like a spreadsheet. Press Save master when finished.")
                 edited=normalize(st.data_editor(df,num_rows="dynamic",use_container_width=True,hide_index=True,key="master_editor"))
-            c1,c2,c3=st.columns(3)
-            with c1:
-                if st.button("Save master to GitHub",use_container_width=True):
-                    try:save_data(edited,"Organizer update registrations");st.success("Master dataset saved.");st.cache_data.clear()
-                    except Exception as e:st.error(str(e))
-            with c2:st.download_button("Download Excel",excel_blob(edited),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
-            with c3:st.download_button("Download CSV",csv_blob(edited),"registrations.csv","text/csv",use_container_width=True)
-            upload=st.file_uploader("Replace master from corrected Excel or CSV",type=["xlsx","csv"])
-            if upload:
-                try:
-                    incoming=normalize(pd.read_excel(upload,dtype=str) if upload.name.lower().endswith(".xlsx") else pd.read_csv(upload,dtype=str))
-                    st.dataframe(incoming,use_container_width=True,hide_index=True)
-                    if st.button("Validate and replace GitHub master"):
-                        save_data(incoming,"Replace registrations from organizer workbook");st.success("Corrected master saved to GitHub.")
-                except Exception as e:st.error("File validation failed: "+str(e))
-            st.markdown("**Summary**")
-            s1,s2,s3,s4=st.columns(4);s1.metric("Total",len(df));s2.metric("Pending",sum(df.status.str.lower()=="pending"));s3.metric("Approved",len(pub));s4.metric("Keynotes",sum(df.role=="Keynote Speaker"))
-        else:st.error("Invalid organizer credentials.")
+                c1,c2,c3=st.columns(3)
+                with c1:
+                    if st.button("Save master",type="primary",use_container_width=True):
+                        try: save_data(edited,"Organizer update registrations"); st.success("Registration master saved to GitHub.")
+                        except Exception as e: st.error(str(e))
+                with c2:
+                    st.download_button("Download Excel",excel_blob(edited),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+                with c3:
+                    st.download_button("Download CSV",csv_blob(edited),"registrations.csv","text/csv",use_container_width=True)
+                upload=st.file_uploader("Upload a corrected Excel or CSV master",type=["xlsx","csv"],key="master_upload")
+                if upload:
+                    try:
+                        incoming=normalize(pd.read_excel(upload,dtype=str) if upload.name.lower().endswith(".xlsx") else pd.read_csv(upload,dtype=str))
+                        st.dataframe(incoming,use_container_width=True,hide_index=True)
+                        if st.button("Replace master with uploaded file"):
+                            save_data(incoming,"Replace registrations from organizer workbook"); st.success("Corrected master saved.")
+                    except Exception as e: st.error("Please check the workbook format. "+str(e))
+                a,b,c,d=st.columns(4);a.metric("Total",len(df));b.metric("Pending",sum(df.status.str.lower()=="pending"));c.metric("Approved",len(pub));d.metric("Keynotes",sum(df.role=="Keynote Speaker"))
+            with progtab:
+                st.caption("Add the programme hour by hour. Use status Published to make a row visible publicly; Draft remains private.")
+                ped=programme.copy()
+                if ped.empty: ped=pd.DataFrame([{"time":"","title":"","description":"","status":"Draft"}],columns=PROGRAMME_FIELDS)
+                ped=st.data_editor(ped,num_rows="dynamic",use_container_width=True,hide_index=True,column_config={"time":st.column_config.TextColumn("Time",help="Example: 09:30 AM"),"title":st.column_config.TextColumn("Session title"),"description":st.column_config.TextColumn("Description"),"status":st.column_config.SelectboxColumn("Status",options=["Draft","Published"])},key="programme_editor")
+                if st.button("Save programme",type="primary",use_container_width=True):
+                    try: save_programme(ped); st.success("Programme saved. Published rows will appear in the Programme section.")
+                    except Exception as e: st.error(str(e))
+        else:
+            st.error("Invalid organizer credentials.")
 
 st.markdown("<hr><center><b>ConvergeX — Intelligent Conference Experience Platform</b><br>Platform design & development: Dr. Mohammad Amir Khusru Akhtar</center>",unsafe_allow_html=True)
