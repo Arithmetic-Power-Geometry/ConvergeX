@@ -29,7 +29,12 @@ def normalize(df):
     df=df.fillna("").astype(str)
     for c in FIELDS:
         if c not in df.columns:df[c]=""
-    return df[FIELDS]
+    df=df[FIELDS]
+    if len(df):
+        valid=(df["registration_id"].str.strip()!="") & (df["name"].str.strip()!="") & (df["email"].str.strip()!="")
+        df=df[valid].copy()
+        df=df.drop_duplicates(subset=["registration_id"],keep="last")
+    return df.reset_index(drop=True)
 
 def local_path(name):
     import os
@@ -114,6 +119,7 @@ def admin_ok(u,p):
     return bool(ap) and hmac.compare_digest(u,au) and hmac.compare_digest(p,ap)
 
 def approved(df):
+    df=normalize(df)
     return df[df.status.str.lower().isin(["approved","confirmed","active"])].copy()
 
 def safe(s):
@@ -136,8 +142,8 @@ html{scroll-behavior:smooth}.stApp{background:radial-gradient(circle at 15% 5%,r
 </style>"""
 st.markdown(CSS,unsafe_allow_html=True)
 df=load_data(); programme=load_programme(); pub=approved(df); days=max((EVENT_DATE-datetime.now()).days,0)
-registration_count=int(df.registration_id[df.registration_id.str.strip()!=""].nunique()) if len(df) else 0
-if registration_count==0 and len(df): registration_count=int(df.email[df.email.str.strip()!=""].str.lower().nunique())
+df=normalize(df)
+registration_count=int(df["registration_id"].nunique()) if len(df) else 0
 
 def heading(a,b="",anchor=""):
     marker=f'<div id="{anchor}" style="scroll-margin-top:85px"></div>' if anchor else ""
@@ -279,6 +285,7 @@ with st.expander("Organizer console"):
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
                 review=df.copy()
+                review=normalize(review)
                 review.insert(0,"delete",False)
                 if review.empty:
                     st.info("No registrations have been received yet.")
@@ -309,21 +316,26 @@ with st.expander("Organizer console"):
                             "certificate":st.column_config.SelectboxColumn("Certificate",options=["","Pending","Ready","Issued"])
                         }
                     )
-                    pending_n=int((review.status.str.lower()=="pending").sum())
-                    approved_n=int((review.status.str.lower()=="approved").sum())
-                    hidden_n=int(review.status.str.lower().isin(["hidden","rejected"]).sum())
-                    delete_n=int(review["delete"].fillna(False).astype(bool).sum())
+                    valid_review=review[(review["registration_id"].fillna("").str.strip()!="") & (review["name"].fillna("").str.strip()!="") & (review["email"].fillna("").str.strip()!="")].copy()
+                    pending_n=int((valid_review.status.str.lower()=="pending").sum())
+                    approved_n=int(valid_review.status.str.lower().isin(["approved","confirmed","active"]).sum())
+                    hidden_n=int(valid_review.status.str.lower().isin(["hidden","rejected"]).sum())
+                    delete_n=int(valid_review["delete"].fillna(False).astype(bool).sum())
                     m1,m2,m3,m4=st.columns(4)
-                    actual_review=review[review["registration_id"].fillna("").str.strip()!=""]
+                    actual_review=valid_review
                     m1.metric("Registrations",int(actual_review["registration_id"].nunique()));m2.metric("Awaiting review",pending_n);m3.metric("Published",approved_n);m4.metric("Private",hidden_n)
                     c1,c2=st.columns([2,1])
                     with c1:
                         if st.button("Save all changes",type="primary",use_container_width=True):
                             try:
                                 kept=review[~review["delete"].fillna(False).astype(bool)].drop(columns=["delete"],errors="ignore")
-                                save_data(normalize(kept))
-                                st.success("Changes saved. Approved rows are public; Pending, Hidden and Rejected rows are private. Selected Delete rows were permanently removed.")
-                                st.rerun()
+                                invalid=kept[(kept["registration_id"].fillna("").str.strip()=="") | (kept["name"].fillna("").str.strip()=="") | (kept["email"].fillna("").str.strip()=="")]
+                                if len(invalid):
+                                    st.error("A registration cannot be saved without Registration ID, Name and Email.")
+                                else:
+                                    save_data(normalize(kept))
+                                    st.success("Changes saved. Approved registrations are now published.")
+                                    st.rerun()
                             except Exception as e:st.error("Could not save the registration sheet. "+str(e))
                     with c2:
                         st.download_button("Download Excel backup",excel_blob(review),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
