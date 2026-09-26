@@ -300,7 +300,7 @@ st.markdown(f'''<div class="becoming">
 <div class="genome-stat gs3"><b>{genome_themes}/{len(THEMES)}</b>PATHWAYS</div>
 <div class="genome-stat gs4"><b>{genome_talks}</b>TALKS</div>
 <div class="helix"><div class="helix-line"></div>{genes}</div>
-<div class="genome-title"><div class="eyebrow">LIVING CONFERENCE GENOME</div><h2>CONVERGEX<br>IS BECOMING</h2><p>People enter. Connections form. The conference changes.</p></div>
+<div class="genome-title"><div class="eyebrow">LIVING CONFERENCE GENOME</div><h2>CONVERGEX<br>IS BECOMING</h2><p>People enter. Connections form. The conference evolves.</p></div>
 </div>''',unsafe_allow_html=True)
 
 heading("Conclave Pulse","A live snapshot of the conference as participation grows.","experience")
@@ -388,7 +388,7 @@ else:
         person_options=["All approved participants"]+sorted(twin_people["name"].tolist())
         who=st.selectbox("Explore a participant",person_options,key="twin_person")
         if who=="All approved participants":
-            st.info("Use the People Directory above to browse or download the full participant list. Select one person here to inspect their live connections.")
+            st.info("Select a participant to reveal their live connections across people, institutions, themes, and ideas.")
         else:
             r=twin_people[twin_people["name"]==who].iloc[0]
             a,b,c=st.columns(3)
