@@ -285,7 +285,7 @@ with st.expander("Organizer console"):
                 else:
                     review=st.data_editor(
                         review,
-                        num_rows="dynamic",
+                        num_rows="fixed",
                         use_container_width=True,
                         hide_index=True,
                         key="registration_review_sheet",
@@ -314,7 +314,8 @@ with st.expander("Organizer console"):
                     hidden_n=int(review.status.str.lower().isin(["hidden","rejected"]).sum())
                     delete_n=int(review["delete"].fillna(False).astype(bool).sum())
                     m1,m2,m3,m4=st.columns(4)
-                    m1.metric("Registrations",len(review));m2.metric("Awaiting review",pending_n);m3.metric("Published",approved_n);m4.metric("Private",hidden_n)
+                    actual_review=review[review["registration_id"].fillna("").str.strip()!=""]
+                    m1.metric("Registrations",int(actual_review["registration_id"].nunique()));m2.metric("Awaiting review",pending_n);m3.metric("Published",approved_n);m4.metric("Private",hidden_n)
                     c1,c2=st.columns([2,1])
                     with c1:
                         if st.button("Save all changes",type="primary",use_container_width=True):
