@@ -36,6 +36,21 @@ def normalize(df):
         df=df.drop_duplicates(subset=["registration_id"],keep="last")
     return df.reset_index(drop=True)
 
+def merge_records(base,incoming):
+    base=normalize(base); incoming=normalize(incoming)
+    records={}
+    order=[]
+    for frame in [base,incoming]:
+        for _,r in frame.iterrows():
+            rid=r["registration_id"].strip()
+            if not rid: continue
+            if rid not in records:
+                records[rid]={c:"" for c in FIELDS}; order.append(rid)
+            for c in FIELDS:
+                v=str(r[c]).strip()
+                if v!="": records[rid][c]=v
+    return normalize(pd.DataFrame([records[r] for r in order],columns=FIELDS))
+
 def local_path(name):
     import os
     os.makedirs("app_data",exist_ok=True)
@@ -133,11 +148,19 @@ def excel_blob(df):
     with pd.ExcelWriter(out,engine="openpyxl") as w: normalize(df).to_excel(w,index=False,sheet_name="Registrations")
     return out.getvalue()
 
-def save_data(df,message="Update ConvergeX registrations"):
+def save_data(df,message="Update ConvergeX registrations",deleted_ids=None):
     clean=normalize(df)
-    clean.to_csv(local_path("registrations.csv"),index=False)
+    deleted_ids=set(deleted_ids or [])
     remote_saved=False
     remote_error=""
+    try:
+        latest,_=github_read_csv()
+        if deleted_ids:
+            latest=latest[~latest["registration_id"].isin(deleted_ids)].copy()
+        clean=merge_records(latest,clean)
+    except Exception:
+        pass
+    clean.to_csv(local_path("registrations.csv"),index=False)
     if github_token():
         try:
             remote_saved=github_write_csv(clean,DATA_PATH,message)
@@ -150,7 +173,7 @@ def save_data(df,message="Update ConvergeX registrations"):
 def register(row):
     df=load_data()
     if len(df) and any(df.email.str.lower()==row["email"].lower()): raise ValueError("This email address is already registered.")
-    merged=normalize(pd.concat([df,pd.DataFrame([row])],ignore_index=True))
+    merged=merge_records(df,pd.DataFrame([row]))
     if not any(merged.registration_id==row["registration_id"]):
         raise ValueError("Registration could not be added to the master record.")
     remote_saved=save_data(merged,"Add conference registration "+row["registration_id"])
@@ -186,7 +209,7 @@ def admin_ok(u,p):
 
 def approved(df):
     df=normalize(df)
-    return df[df.status.str.lower().isin(["approved","confirmed","active"])].copy()
+    return df[df.status.str.lower().eq("approved")].copy()
 
 def safe(s):
     import html
@@ -427,17 +450,40 @@ with st.expander("Organizer console"):
                     with c1:
                         if st.button("Save all changes",type="primary",use_container_width=True):
                             try:
+                                deleted_ids=review.loc[review["delete"].fillna(False).astype(bool),"registration_id"].astype(str).tolist()
                                 kept=review[~review["delete"].fillna(False).astype(bool)].drop(columns=["delete"],errors="ignore")
                                 invalid=kept[(kept["registration_id"].fillna("").str.strip()=="") | (kept["name"].fillna("").str.strip()=="") | (kept["email"].fillna("").str.strip()=="")]
                                 if len(invalid):
                                     st.error("A registration cannot be saved without Registration ID, Name and Email.")
                                 else:
-                                    save_data(normalize(kept))
-                                    st.success("Changes saved. Approved registrations are now published.")
+                                    remote_saved=save_data(normalize(kept),"Update registration master",deleted_ids=deleted_ids)
+                                    if not remote_saved:
+                                        raise RuntimeError(st.session_state.get("last_remote_error","Repository write did not complete."))
+                                    st.success("Changes saved to the conference master. Approved registrations are now published.")
                                     st.rerun()
                             except Exception as e:st.error("Could not save the registration sheet. "+str(e))
                     with c2:
                         st.download_button("Download Excel backup",excel_blob(review),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+                    st.markdown("#### Backup & restore")
+                    upload=st.file_uploader("Upload registration backup",type=["xlsx","csv"],key="registration_backup_upload",help="Uploaded rows are merged by Registration ID. Existing populated data is preserved unless the uploaded file provides a replacement value.")
+                    if upload is not None:
+                        if st.button("Validate & merge backup",use_container_width=True):
+                            try:
+                                if upload.name.lower().endswith(".xlsx"):
+                                    incoming=pd.read_excel(upload,dtype=str).fillna("")
+                                else:
+                                    incoming=pd.read_csv(upload,dtype=str).fillna("")
+                                missing_cols=[c for c in ["registration_id","name","email"] if c not in incoming.columns]
+                                if missing_cols: raise ValueError("Backup is missing required columns: "+", ".join(missing_cols))
+                                incoming=normalize(incoming)
+                                if incoming.empty: raise ValueError("No valid registrations were found in the uploaded backup.")
+                                merged=merge_records(df,incoming)
+                                remote_saved=save_data(merged,"Merge registration backup")
+                                if not remote_saved: raise RuntimeError(st.session_state.get("last_remote_error","Repository write did not complete."))
+                                st.success(f"Backup merged successfully. {len(incoming)} valid uploaded registration(s) processed.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error("Backup was not imported. "+str(e))
                     st.caption("Approve publishes a row; Hidden removes it from the public site without deleting it. For a permanent removal, tick Delete in that row and then Save all changes.")
             with progtab:
                 st.caption("Add the programme hour by hour. Use status Published to make a row visible publicly; Draft remains private.")
