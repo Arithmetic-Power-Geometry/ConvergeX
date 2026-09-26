@@ -202,45 +202,50 @@ with st.expander("Organizer console"):
             st.success("Organizer access granted.")
             regtab,progtab=st.tabs(["Registration master","Programme editor"])
             with regtab:
-                st.caption("Review pending registrations first. Approve publishes the person automatically in the correct People section; Reject keeps the record private.")
-                pending=df[df.status.str.lower()=="pending"].copy()
-                if pending.empty:
-                    st.info("No registrations are waiting for approval.")
+                st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
+                review=df.copy()
+                if review.empty:
+                    st.info("No registrations have been received yet.")
                 else:
-                    for idx,r in pending.iterrows():
-                        with st.container(border=True):
-                            left,right=st.columns([4,1])
-                            with left:
-                                st.markdown(f"**{safe(r['name'])}**  ·  {safe(r['role'])}")
-                                st.caption(f"{safe(r['designation'])} · {safe(r['institution'])} · {safe(r['country'])} · {safe(r['email'])}")
-                                if r["talk_title"]: st.write("Proposed talk:",r["talk_title"])
-                                if r["profile"]: st.write(r["profile"])
-                            with right:
-                                if st.button("✓ Approve",key=f"approve_{r['registration_id']}",type="primary",use_container_width=True):
-                                    fresh=load_data(); fresh.loc[fresh.registration_id==r["registration_id"],"status"]="Approved"; save_data(fresh); st.success("Approved and published."); st.rerun()
-                                if st.button("Reject",key=f"reject_{r['registration_id']}",use_container_width=True):
-                                    fresh=load_data(); fresh.loc[fresh.registration_id==r["registration_id"],"status"]="Rejected"; save_data(fresh); st.warning("Registration rejected."); st.rerun()
-                st.markdown("#### Master registration sheet")
-                st.caption("You can also correct any field directly below. Approved/Confirmed/Active records are public; Pending/Rejected/Hidden records remain private.")
-                edited=normalize(st.data_editor(df,num_rows="dynamic",use_container_width=True,hide_index=True,key="master_editor"))
-                c1,c2,c3=st.columns(3)
-                with c1:
-                    if st.button("Save master",type="primary",use_container_width=True):
-                        try: save_data(edited,"Organizer update registrations"); st.success("Registration master saved.")
-                        except Exception as e: st.error(str(e))
-                with c2:
-                    st.download_button("Download Excel",excel_blob(edited),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
-                with c3:
-                    st.download_button("Download CSV",csv_blob(edited),"registrations.csv","text/csv",use_container_width=True)
-                upload=st.file_uploader("Upload a corrected Excel or CSV master",type=["xlsx","csv"],key="master_upload")
-                if upload:
-                    try:
-                        incoming=normalize(pd.read_excel(upload,dtype=str) if upload.name.lower().endswith(".xlsx") else pd.read_csv(upload,dtype=str))
-                        st.dataframe(incoming,use_container_width=True,hide_index=True)
-                        if st.button("Replace master with uploaded file"):
-                            save_data(incoming); st.success("Corrected master saved.")
-                    except Exception as e: st.error("Please check the workbook format. "+str(e))
-                a,b,c,d=st.columns(4);a.metric("Total",len(df));b.metric("Pending",sum(df.status.str.lower()=="pending"));c.metric("Approved",len(pub));d.metric("Keynotes",sum(df.role=="Keynote Speaker"))
+                    review=st.data_editor(
+                        review,
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        hide_index=True,
+                        key="registration_review_sheet",
+                        column_config={
+                            "registration_id":st.column_config.TextColumn("Registration ID",disabled=True),
+                            "timestamp":st.column_config.TextColumn("Received",disabled=True),
+                            "name":st.column_config.TextColumn("Name",required=True),
+                            "designation":st.column_config.TextColumn("Designation"),
+                            "institution":st.column_config.TextColumn("Institution",required=True),
+                            "email":st.column_config.TextColumn("Email",required=True),
+                            "mobile":st.column_config.TextColumn("Mobile"),
+                            "country":st.column_config.TextColumn("Country"),
+                            "role":st.column_config.SelectboxColumn("Role",options=ROLES,required=True),
+                            "theme":st.column_config.SelectboxColumn("Theme",options=THEMES),
+                            "talk_title":st.column_config.TextColumn("Talk title"),
+                            "profile":st.column_config.TextColumn("Profile"),
+                            "status":st.column_config.SelectboxColumn("Publication status",options=["Pending","Approved","Hidden","Rejected"],required=True,help="Approved publishes the record. Hidden/Rejected/Pending keep it private."),
+                            "payment":st.column_config.SelectboxColumn("Payment",options=["Pending","Paid","Waived","Not applicable"]),
+                            "accommodation":st.column_config.SelectboxColumn("Accommodation",options=["","Pending","Confirmed","Not required"]),
+                            "certificate":st.column_config.SelectboxColumn("Certificate",options=["","Pending","Ready","Issued"])
+                        }
+                    )
+                    pending_n=int((review.status.str.lower()=="pending").sum())
+                    approved_n=int((review.status.str.lower()=="approved").sum())
+                    hidden_n=int(review.status.str.lower().isin(["hidden","rejected"]).sum())
+                    m1,m2,m3,m4=st.columns(4)
+                    m1.metric("Registrations",len(review));m2.metric("Awaiting review",pending_n);m3.metric("Published",approved_n);m4.metric("Private",hidden_n)
+                    c1,c2=st.columns([2,1])
+                    with c1:
+                        if st.button("Save all changes",type="primary",use_container_width=True):
+                            try:
+                                save_data(normalize(review));st.success("Changes saved. Approved rows are public; Pending, Hidden and Rejected rows are private.");st.rerun()
+                            except Exception as e:st.error("Could not save the registration sheet. "+str(e))
+                    with c2:
+                        st.download_button("Download Excel backup",excel_blob(review),"ConvergeX_Registrations.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+                    st.caption("To approve: choose Approved in the row's Publication status. To remove someone from the public site later, change the same field to Hidden. You can edit any correction in that row before saving.")
             with progtab:
                 st.caption("Add the programme hour by hour. Use status Published to make a row visible publicly; Draft remains private.")
                 ped=programme.copy()
