@@ -181,13 +181,15 @@ def public_report_blob(df):
     public_cols=["name","designation","institution","country","role","theme","talk_title","profile"]
     x=normalize(df)[public_cols].copy()
     x.columns=["Name","Designation","Institution","Country","Role","Theme","Talk title","Profile"]
+    sheet="Approved People"
     with pd.ExcelWriter(out,engine="openpyxl") as w:
-        x.to_excel(w,index=False,sheet_name="Approved Participants")
-        ws=w["Approved Participants"]
+        x.to_excel(w,index=False,sheet_name=sheet)
+        ws=w.sheets[sheet]
         ws.freeze_panes="A2"
         ws.auto_filter.ref=ws.dimensions
         widths={"A":28,"B":24,"C":38,"D":16,"E":24,"F":42,"G":42,"H":55}
-        for col,width in widths.items(): ws.column_dimensions[col].width=width
+        for col,width in widths.items():
+            ws.column_dimensions[col].width=width
     return out.getvalue()
 
 def load_programme():
