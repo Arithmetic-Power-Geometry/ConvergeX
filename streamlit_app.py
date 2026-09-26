@@ -12,8 +12,8 @@ PROGRAMME_PATH="data/programme.csv"
 PROGRAMME_FIELDS=["time","title","description","status"]
 RAW="https://raw.githubusercontent.com/"+REPO+"/main/"+DATA_PATH
 EVENT_DATE=datetime(2026,10,25,9,0)
-ROLES=["Delegate","Keynote Speaker","Invited Speaker","Researcher","Industry Professional","Entrepreneur","Student","Organizing Committee","Other"]
-THEMES=["Strategic Technology & Innovation Management","Artificial Intelligence & Generative AI","DeepTech & Emerging Technologies","Research, Entrepreneurship & Start-ups","Intellectual Property & Patent Strategy","Future-Ready Leadership & Sustainability"]
+DEFAULT_ROLES=["Delegate","Keynote Speaker","Invited Speaker","Researcher","Industry Professional","Entrepreneur","Student","Organizing Committee","Other"]
+DEFAULT_THEMES=["Strategic Technology & Innovation Management","Artificial Intelligence & Generative AI","DeepTech & Emerging Technologies","Research, Entrepreneurship & Start-ups","Intellectual Property & Patent Strategy","Future-Ready Leadership & Sustainability"]
 FIELDS=["registration_id","timestamp","name","designation","institution","email","mobile","country","role","theme","talk_title","profile","status","payment","accommodation","certificate"]
 PUBLIC=["registration_id","name","designation","institution","country","role","theme","talk_title"]
 
@@ -35,6 +35,33 @@ def local_path(name):
     import os
     os.makedirs("app_data",exist_ok=True)
     return "app_data/"+name
+
+def clean_options(values):
+    out=[]
+    for v in values:
+        v=str(v).strip()
+        if v and v not in out: out.append(v)
+    return out
+
+def load_taxonomy():
+    p=local_path("taxonomy.json")
+    try:
+        if __import__("os").path.exists(p):
+            with open(p,"r",encoding="utf-8") as fh: cfg=json.load(fh)
+        else: cfg={}
+    except Exception: cfg={}
+    roles=clean_options(cfg.get("roles",DEFAULT_ROLES)) or DEFAULT_ROLES.copy()
+    themes=clean_options(cfg.get("themes",DEFAULT_THEMES)) or DEFAULT_THEMES.copy()
+    return roles,themes
+
+def save_taxonomy(roles,themes):
+    roles=clean_options(roles); themes=clean_options(themes)
+    if not roles or not themes: raise ValueError("Keep at least one participation role and one primary focus.")
+    with open(local_path("taxonomy.json"),"w",encoding="utf-8") as fh:
+        json.dump({"roles":roles,"themes":themes},fh,ensure_ascii=False,indent=2)
+    return True
+
+ROLES,THEMES=load_taxonomy()
 
 def load_data():
     p=local_path("registrations.csv")
@@ -130,7 +157,10 @@ st.markdown("""<div class="card"><span class="badge">CONCLAVE ORGANISER</span><d
 
 heading("People","Organizer-approved registrations automatically populate the appropriate role view.","people")
 role_tabs=st.tabs(["Keynotes","Invited Speakers","Delegates & Participants"])
-for tab,roles in zip(role_tabs,[["Keynote Speaker"],["Invited Speaker"],[x for x in ROLES if x not in ["Keynote Speaker","Invited Speaker"]]]):
+keynote_roles=[x for x in ROLES if "keynote" in x.lower()]
+invited_roles=[x for x in ROLES if "invited" in x.lower() and "keynote" not in x.lower()]
+other_roles=[x for x in ROLES if x not in keynote_roles+invited_roles]
+for tab,roles in zip(role_tabs,[keynote_roles,invited_roles,other_roles]):
     with tab:
         people=pub[pub.role.isin(roles)]
         if people.empty:st.info("No organizer-approved entries in this category yet.")
@@ -150,9 +180,11 @@ talk_count=int((twin_people.talk_title.str.strip()!="").sum()) if len(twin_peopl
 active_themes=sum(1 for v in theme_counts.values() if v>0)
 top_theme=max(theme_counts,key=theme_counts.get) if theme_counts and max(theme_counts.values(),default=0)>0 else "Awaiting approved registrations"
 labels=["Strategy","AI & GenAI","DeepTech","Research","IP Strategy","Leadership"]
-counts=[theme_counts[t] for t in THEMES]
-nodes="".join(f'<div class="twin-node tn{i+1}">{safe(labels[i])}<br><span class="cyan">{counts[i]}</span></div>' for i in range(6))
-st.markdown(f'''<div class="twin-shell"><div class="twin-grid"><div class="twin-map"><div class="twin-core">CONVERGEX<br>DIGITAL TWIN<br><span class="cyan">{len(twin_people)} PEOPLE</span></div>{nodes}</div><div class="twin-side"><div class="insight"><b>{len(twin_people)}</b><small>approved people represented</small></div><div class="insight"><b>{inst_count}</b><small>institutions connected</small></div><div class="insight"><b>{active_themes}/6</b><small>active thematic pathways</small></div><div class="insight"><b>{talk_count}</b><small>proposed talks connected</small></div><div class="insight"><b>{safe(top_theme)}</b><small>largest represented theme</small></div></div></div></div>''',unsafe_allow_html=True)
+display_themes=(THEMES+["","","","","",""])[:6]
+counts=[theme_counts.get(t,0) if t else 0 for t in display_themes]
+node_labels=[labels[i] if i>=len(THEMES) else (THEMES[i][:22]+"…" if len(THEMES[i])>22 else THEMES[i]) for i in range(6)]
+nodes="".join(f'<div class="twin-node tn{i+1}">{safe(node_labels[i])}<br><span class="cyan">{counts[i]}</span></div>' for i in range(6))
+st.markdown(f'''<div class="twin-shell"><div class="twin-grid"><div class="twin-map"><div class="twin-core">CONVERGEX<br>DIGITAL TWIN<br><span class="cyan">{len(twin_people)} PEOPLE</span></div>{nodes}</div><div class="twin-side"><div class="insight"><b>{len(twin_people)}</b><small>approved people represented</small></div><div class="insight"><b>{inst_count}</b><small>institutions connected</small></div><div class="insight"><b>{active_themes}/{len(THEMES)}</b><small>active thematic pathways</small></div><div class="insight"><b>{talk_count}</b><small>proposed talks connected</small></div><div class="insight"><b>{safe(top_theme)}</b><small>largest represented theme</small></div></div></div></div>''',unsafe_allow_html=True)
 
 if twin_people.empty:
     st.info("The Digital Twin will activate automatically as the organizer approves registrations.")
@@ -176,7 +208,7 @@ else:
         st.dataframe(intelligence,use_container_width=True,hide_index=True)
         gaps=intelligence[intelligence["Approved people"]==0]["Theme"].tolist()
         if gaps: st.info("Currently unrepresented pathways: "+", ".join(gaps))
-        else: st.success("All six conference pathways currently have approved representation.")
+        else: st.success("All configured conference pathways currently have approved representation.")
     with twin_tabs[2]:
         inst=twin_people[twin_people.institution.str.strip()!=""].groupby("institution").agg(People=("name","count"),Themes=("theme","nunique"),Roles=("role","nunique")).reset_index().sort_values(["People","Themes"],ascending=False)
         st.dataframe(inst,use_container_width=True,hide_index=True)
@@ -241,7 +273,7 @@ with st.expander("Organizer console"):
             st.warning("Organizer access is not configured yet. Add ADMIN_PASSWORD in Streamlit Secrets.")
         elif admin_ok(u,p):
             st.success("Organizer access granted.")
-            regtab,progtab=st.tabs(["Registration master","Programme editor"])
+            regtab,progtab,optiontab=st.tabs(["Registration master","Programme editor","Registration options"])
             with regtab:
                 st.caption("One professional review sheet: inspect, correct and change publication status in the same row, then save once.")
                 review=df.copy()
@@ -295,6 +327,22 @@ with st.expander("Organizer console"):
                 if st.button("Save programme",type="primary",use_container_width=True):
                     try: save_programme(ped); st.success("Programme saved. Published rows will appear in the Programme section after refresh.")
                     except Exception as e: st.error(str(e))
+            with optiontab:
+                st.caption("Edit the choices shown in the public registration form. Saving here updates Participation role and Primary focus across the app.")
+                st.markdown("#### Participation roles")
+                role_df=pd.DataFrame({"Participation role":ROLES})
+                role_edit=st.data_editor(role_df,num_rows="dynamic",use_container_width=True,hide_index=True,key="role_options_editor",column_config={"Participation role":st.column_config.TextColumn("Participation role",required=True)})
+                st.markdown("#### Primary focus areas")
+                theme_df=pd.DataFrame({"Primary focus":THEMES})
+                theme_edit=st.data_editor(theme_df,num_rows="dynamic",use_container_width=True,hide_index=True,key="theme_options_editor",column_config={"Primary focus":st.column_config.TextColumn("Primary focus",required=True)})
+                if st.button("Save registration options",type="primary",use_container_width=True):
+                    try:
+                        new_roles=clean_options(role_edit["Participation role"].tolist())
+                        new_themes=clean_options(theme_edit["Primary focus"].tolist())
+                        save_taxonomy(new_roles,new_themes)
+                        st.success("Registration options saved. The registration form and connected views now use the updated choices.")
+                        st.rerun()
+                    except Exception as e: st.error("Could not save registration options. "+str(e))
         else:
             st.error("Invalid organizer credentials.")
 
